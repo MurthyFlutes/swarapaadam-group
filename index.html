@@ -68,7 +68,7 @@
 <div class="card adm">
   <h2>Recording (admin)</h2>
   <div class="row"><button onclick="recStart()" id="recbtn">Record everyone</button><button class="alt" onclick="recStop()">Stop &amp; save</button></div>
-  <div class="mono" id="recinfo" style="margin-top:6px">Records the mix of all voices + your MP3, and each singer on their own track. Files are saved to this computer's Downloads.</div>
+  <div class="mono" id="recinfo" style="margin-top:6px">Records one mixed file: your MP3 + your voice + all singers. Saved to this computer's Downloads.</div>
 </div>
 
 <div class="card dev">
@@ -305,7 +305,7 @@ let vMic = null, micSrc = null;
 function vInfo(t) { document.getElementById('voiceinfo').textContent = t; }
 function vShowList() {
   const ids = Object.keys(vPeers);
-  vInfo('[build g12] Room "' + decodeURIComponent(vRoom) + '", you=' + MYID.slice(0, 4) + ', ticks=' + vTicks + ', database sees ' + vSeen + (vErr ? '\nERROR: ' + vErr : '') + '\n' + (vMic ? 'Mic on' : 'Listen only (no mic)') + '. Connected: ' + (ids.length ? ids.map(i => (vNames[i] || i) + ' [' + vPeers[i].pc.connectionState + ']' + (vPeers[i].level ? ' hearing ' + '|'.repeat(Math.min(20, Math.round(vPeers[i].level() / 3))) : ' (no audio track yet)')).join(', ') : 'nobody else yet'));
+  vInfo('[build g13] Room "' + decodeURIComponent(vRoom) + '", you=' + MYID.slice(0, 4) + ', ticks=' + vTicks + ', database sees ' + vSeen + (vErr ? '\nERROR: ' + vErr : '') + '\n' + (vMic ? 'Mic on' : 'Listen only (no mic)') + '. Connected: ' + (ids.length ? ids.map(i => (vNames[i] || i) + ' [' + vPeers[i].pc.connectionState + ']' + (vPeers[i].level ? ' hearing ' + '|'.repeat(Math.min(20, Math.round(vPeers[i].level() / 3))) : ' (no audio track yet)')).join(', ') : 'nobody else yet'));
 }
 function waitIce(pc) { return new Promise(res => { if (pc.iceGatheringState === 'complete') return res(); const f = () => { if (pc.iceGatheringState === 'complete') { pc.removeEventListener('icegatheringstatechange', f); res(); } }; pc.addEventListener('icegatheringstatechange', f); setTimeout(res, 3500); }); }
 function opus(sdp) { return sdp.replace(/useinbandfec=1/g, 'useinbandfec=1;maxaveragebitrate=96000;stereo=0'); }
@@ -471,8 +471,8 @@ function mp3Vol() { if (mp3Gain) mp3Gain.gain.value = +document.getElementById('
 let rec = null;
 function recAddPeer(id, stream) {
   if (!rec || rec.tracks[id]) return;
-  ctx.createMediaStreamSource(stream).connect(rec.mix);
-  rec.tracks[id] = recorder(stream);
+  ctx.createMediaStreamSource(stream).connect(rec.mix);   // this singer joins the mix
+  rec.tracks[id] = true;
 }
 function recorder(stream) { const chunks = [], r = new MediaRecorder(stream); r.ondataavailable = e => e.data.size && chunks.push(e.data); r.start(1000); return { r, chunks }; }
 function recStart() {
@@ -481,10 +481,9 @@ function recStart() {
   const mix = ctx.createMediaStreamDestination(); mp3Gain.connect(mix); if (micSrc) micSrc.connect(mix);
   rec = { mix, mixSrcs: [], tracks: {}, t0: Date.now(), room: decodeURIComponent(roomCode()) };
   rec.mixRec = recorder(mix.stream);
-  if (vMic) rec.me = recorder(vMic);
   Object.keys(vPeers).forEach(id => vPeers[id].stream && recAddPeer(id, vPeers[id].stream));
   document.getElementById('recbtn').textContent = 'Recording...';
-  rec.timer = setInterval(() => { document.getElementById('recinfo').textContent = 'Recording ' + ((Date.now() - rec.t0) / 1000).toFixed(0) + ' s. Singers on their own track: ' + Object.keys(rec.tracks).length + (vInVoice ? '' : ' (you are not in voice, so no one is heard)'); }, 1000);
+  rec.timer = setInterval(() => { document.getElementById('recinfo').textContent = 'Recording ' + ((Date.now() - rec.t0) / 1000).toFixed(0) + ' s. Singers in the mix: ' + Object.keys(rec.tracks).length + (vInVoice ? '' : ' (you are not in voice, so no one is heard)'); }, 1000);
 }
 function save(chunks, name) {
   const b = new Blob(chunks, { type: 'audio/webm' }), a = document.createElement('a');
@@ -492,13 +491,12 @@ function save(chunks, name) {
 }
 async function recStop() {
   if (!rec) return; const R = rec; rec = null; clearInterval(R.timer);
-  const all = [['MIX_all', R.mixRec]]; if (R.me) all.push(['admin', R.me]);
-  Object.keys(R.tracks).forEach(id => all.push([vNames[id] || id, R.tracks[id]]));
-  await Promise.all(all.map(([, x]) => new Promise(res => { x.r.onstop = res; x.r.state !== 'inactive' ? x.r.stop() : res(); })));
+  const x = R.mixRec;   // only the mix: MP3 + admin voice + all singers together
+  await new Promise(res => { x.r.onstop = res; x.r.state !== 'inactive' ? x.r.stop() : res(); });
   const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
-  all.forEach(([n, x], i) => setTimeout(() => save(x.chunks, 'swarapaadam_' + R.room + '_' + stamp + '_' + String(n).replace(/[^\w-]+/g, '_')), i * 600));
+  save(x.chunks, 'swarapaadam_' + R.room + '_' + stamp + '_mix');
   document.getElementById('recbtn').textContent = 'Record everyone';
-  document.getElementById('recinfo').textContent = 'Saved ' + all.length + ' file(s) to Downloads (allow multiple downloads if the browser asks).';
+  document.getElementById('recinfo').textContent = 'Saved one mixed file to Downloads.';
 }
 setInterval(() => { if (vInVoice) vShowList(); }, 400);   // live level meter next to each person
 setInterval(drawClock, 25); syncClock();
