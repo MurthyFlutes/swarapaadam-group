@@ -305,7 +305,7 @@ let vMic = null, micSrc = null;
 function vInfo(t) { document.getElementById('voiceinfo').textContent = t; }
 function vShowList() {
   const ids = Object.keys(vPeers);
-  vInfo('[build g11] Room "' + decodeURIComponent(vRoom) + '", you=' + MYID.slice(0, 4) + ', ticks=' + vTicks + ', database sees ' + vSeen + (vErr ? '\nERROR: ' + vErr : '') + '\n' + (vMic ? 'Mic on' : 'Listen only (no mic)') + '. Connected: ' + (ids.length ? ids.map(i => (vNames[i] || i) + ' [' + vPeers[i].pc.connectionState + ']' + (vPeers[i].level ? ' hearing ' + '|'.repeat(Math.min(20, Math.round(vPeers[i].level() / 3))) : ' (no audio track yet)')).join(', ') : 'nobody else yet'));
+  vInfo('[build g12] Room "' + decodeURIComponent(vRoom) + '", you=' + MYID.slice(0, 4) + ', ticks=' + vTicks + ', database sees ' + vSeen + (vErr ? '\nERROR: ' + vErr : '') + '\n' + (vMic ? 'Mic on' : 'Listen only (no mic)') + '. Connected: ' + (ids.length ? ids.map(i => (vNames[i] || i) + ' [' + vPeers[i].pc.connectionState + ']' + (vPeers[i].level ? ' hearing ' + '|'.repeat(Math.min(20, Math.round(vPeers[i].level() / 3))) : ' (no audio track yet)')).join(', ') : 'nobody else yet'));
 }
 function waitIce(pc) { return new Promise(res => { if (pc.iceGatheringState === 'complete') return res(); const f = () => { if (pc.iceGatheringState === 'complete') { pc.removeEventListener('icegatheringstatechange', f); res(); } }; pc.addEventListener('icegatheringstatechange', f); setTimeout(res, 3500); }); }
 function opus(sdp) { return sdp.replace(/useinbandfec=1/g, 'useinbandfec=1;maxaveragebitrate=96000;stereo=0'); }
@@ -324,6 +324,7 @@ async function vCall(id) {   // I am the caller for peers with a smaller id
   await waitIce(pc); await vSend(id, { type: 'offer', sdp: pc.localDescription.sdp });
 }
 async function vHandle(from, m) {
+  if (!vInVoice) return;
   if (m.type === 'offer') {
     const pc = vNewPc(from); await pc.setRemoteDescription({ type: 'offer', sdp: m.sdp });
     const a = await pc.createAnswer(); await pc.setLocalDescription({ type: 'answer', sdp: opus(a.sdp) });
@@ -332,15 +333,18 @@ async function vHandle(from, m) {
     await vPeers[from].pc.setRemoteDescription({ type: 'answer', sdp: m.sdp });
   }
 }
-let vBusy = false, vTicks = 0, vSeen = 'nobody', vErr = '', vBusySince = 0;
+let vBusy = false, vTicks = 0, vSeen = 'nobody', vErr = '', vBusySince = 0, vGen = 0;
 async function vTick() {
   if (!vInVoice) return;
   if (vBusy && Date.now() - vBusySince > 20000) vBusy = false;   // a stuck round must never block the next ones
   if (vBusy) return; vBusy = true; vBusySince = Date.now();
+  const gen = vGen, stale = () => !vInVoice || gen !== vGen;      // true once Leave was tapped: abandon this round
   try {
     const nm = document.getElementById('name').value.trim();
     await fetch(vBase() + '/peers/' + MYID + '.json', { method: 'PUT', body: JSON.stringify({ t: serverNow(), name: nm || ('guest-' + MYID.slice(0, 3)) }) });
+    if (stale()) { vBusy = false; return; }
     const peers = (await (await fetch(vBase() + '/peers.json', { cache: 'no-store' })).json()) || {};
+    if (stale()) { vBusy = false; return; }
     const now = serverNow();
     vSeen = Object.keys(peers).map(i => (peers[i].name || i) + (i === MYID ? '(me)' : '') + (now - peers[i].t > 12000 ? '(stale ' + ((now - peers[i].t) / 1000).toFixed(0) + 's)' : '')).join(', ') || 'nobody';
     for (const id of Object.keys(peers)) {
@@ -350,18 +354,27 @@ async function vTick() {
       const p = vPeers[id];
       if (!p && MYID > id) { await vCall(id); }
       else if (p && MYID > id && ['failed', 'closed'].includes(p.pc.connectionState)) { await vCall(id); }
+      if (stale()) { Object.keys(vPeers).forEach(vDrop); vBusy = false; return; }
     }
     for (const id of Object.keys(vPeers)) if (!peers[id]) vDrop(id);
     const sig = (await (await fetch(vBase() + '/sig/' + MYID + '.json', { cache: 'no-store' })).json()) || {};
     for (const from of Object.keys(sig)) {
+      if (stale()) { vBusy = false; return; }
       await fetch(vBase() + '/sig/' + MYID + '/' + from + '.json', { method: 'DELETE' });
       if (Date.now() - sig[from].t < 20000) await vHandle(from, sig[from]);
     }
+    if (stale()) { Object.keys(vPeers).forEach(vDrop); vBusy = false; return; }
     vTicks++; vErr = '';
   } catch (e) { vErr = e.name + ': ' + e.message; }
   vBusy = false;
 }
-function vDrop(id) { try { vPeers[id].pc.close(); } catch (_) {} delete vPeers[id]; const a = document.getElementById('au_' + id); if (a) a.remove(); }
+function vDrop(id) {
+  const p = vPeers[id]; if (!p) return;
+  try { if (p.stream) p.stream.getTracks().forEach(t => t.stop()); } catch (_) {}
+  try { p.pc.getReceivers().forEach(r => r.track && r.track.stop()); p.pc.close(); } catch (_) {}
+  delete vPeers[id];
+  const a = document.getElementById('au_' + id); if (a) { a.pause(); a.srcObject = null; a.remove(); }
+}
 async function voiceJoin() {
   if (vInVoice) { voiceLeave(); return; }
   if (!joined) { alert('Tap Join room first.'); return; }
@@ -383,7 +396,8 @@ async function voiceJoin() {
   vTimers = [setInterval(vTick, 1500)]; vTick();
 }
 function voiceLeave() {
-  vInVoice = false; vTimers.forEach(clearInterval); Object.keys(vPeers).forEach(vDrop);
+  vInVoice = false; vGen++; vTimers.forEach(clearInterval); Object.keys(vPeers).forEach(vDrop);
+  const room = vRoom; setTimeout(() => { fetch(DB + '/rooms/' + room + '/peers/' + MYID + '.json', { method: 'DELETE' }); }, 2500);   // remove a heartbeat a late round might have written
   if (vMic) vMic.getTracks().forEach(t => t.stop()); vMic = null; vStream = null;
   if (micSrc) { try { micSrc.disconnect(); } catch (_) {} micSrc = null; }
   fetch(vBase() + '/peers/' + MYID + '.json', { method: 'DELETE', keepalive: true });
