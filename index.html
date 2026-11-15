@@ -64,6 +64,14 @@
 </div>
 
 <div class="card">
+  <h2>Voices (talk and sing together)</h2>
+  <label><input type="checkbox" id="music" style="width:auto"> Music mode: no echo-cancel / noise filter (use earphones!)</label>
+  <div class="row" style="margin-top:8px"><button onclick="voiceJoin()" id="vjoin">Join voice</button><button class="alt" onclick="voiceMute()" id="vmute">Mute me</button></div>
+  <div class="mono" id="voiceinfo" style="margin-top:6px">Not in voice. Use earphones, or others will hear the video twice.</div>
+  <div id="voiceaudio"></div>
+</div>
+
+<div class="card">
   <h2>YouTube for everyone</h2>
   <label>YouTube link (paste, then Load for everyone)</label>
   <input id="yturl" placeholder="https://www.youtube.com/watch?v=...">
@@ -260,6 +268,87 @@ setInterval(() => {   // every 150 ms: bring this phone's player to where the ro
     info.textContent = 'Paused at ' + vid.basePos.toFixed(1) + ' s';
   }
 }, 150);
+// ── voices: WebRTC audio straight between phones; Firebase only carries the connection set-up notes ──
+const ICE = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
+let vInVoice = false, vStream = null, vPeers = {}, vNames = {}, vRoom = '', vTimers = [];
+function vBase() { return DB + '/rooms/' + vRoom; }
+function vInfo(t) { document.getElementById('voiceinfo').textContent = t; }
+function vShowList() {
+  const ids = Object.keys(vPeers);
+  vInfo((vStream ? 'Mic on' : 'Listen only (no mic)') + '. Connected: ' + (ids.length ? ids.map(i => (vNames[i] || i) + ' [' + vPeers[i].pc.connectionState + ']').join(', ') : 'nobody else yet'));
+}
+function waitIce(pc) { return new Promise(res => { if (pc.iceGatheringState === 'complete') return res(); const f = () => { if (pc.iceGatheringState === 'complete') { pc.removeEventListener('icegatheringstatechange', f); res(); } }; pc.addEventListener('icegatheringstatechange', f); setTimeout(res, 3500); }); }
+function opus(sdp) { return sdp.replace(/useinbandfec=1/g, 'useinbandfec=1;maxaveragebitrate=96000;stereo=0'); }
+function vNewPc(id) {
+  if (vPeers[id]) { try { vPeers[id].pc.close(); } catch (_) {} const old = document.getElementById('au_' + id); if (old) old.remove(); }
+  const pc = new RTCPeerConnection(ICE); vPeers[id] = { pc };
+  if (vStream) vStream.getTracks().forEach(t => pc.addTrack(t, vStream)); else pc.addTransceiver('audio', { direction: 'recvonly' });
+  pc.ontrack = e => { let a = document.getElementById('au_' + id); if (!a) { a = document.createElement('audio'); a.id = 'au_' + id; a.autoplay = true; a.playsInline = true; document.getElementById('voiceaudio').appendChild(a); } a.srcObject = e.streams[0]; a.play().catch(() => {}); };
+  pc.onconnectionstatechange = vShowList;
+  return pc;
+}
+async function vSend(to, msg) { msg.t = Date.now(); await fetch(vBase() + '/sig/' + to + '/' + MYID + '.json', { method: 'PUT', body: JSON.stringify(msg) }); }
+async function vCall(id) {   // I am the caller for peers with a smaller id
+  const pc = vNewPc(id); const o = await pc.createOffer(); await pc.setLocalDescription({ type: 'offer', sdp: opus(o.sdp) });
+  await waitIce(pc); await vSend(id, { type: 'offer', sdp: pc.localDescription.sdp });
+}
+async function vHandle(from, m) {
+  if (m.type === 'offer') {
+    const pc = vNewPc(from); await pc.setRemoteDescription({ type: 'offer', sdp: m.sdp });
+    const a = await pc.createAnswer(); await pc.setLocalDescription({ type: 'answer', sdp: opus(a.sdp) });
+    await waitIce(pc); await vSend(from, { type: 'answer', sdp: pc.localDescription.sdp });
+  } else if (m.type === 'answer' && vPeers[from] && vPeers[from].pc.signalingState === 'have-local-offer') {
+    await vPeers[from].pc.setRemoteDescription({ type: 'answer', sdp: m.sdp });
+  }
+}
+let vBusy = false;
+async function vTick() {
+  if (!vInVoice || vBusy) return; vBusy = true;
+  try {
+    const nm = document.getElementById('name').value.trim();
+    await fetch(vBase() + '/peers/' + MYID + '.json', { method: 'PUT', body: JSON.stringify({ t: serverNow(), name: nm || ('guest-' + MYID.slice(0, 3)) }) });
+    const peers = (await (await fetch(vBase() + '/peers.json', { cache: 'no-store' })).json()) || {};
+    const now = serverNow();
+    for (const id of Object.keys(peers)) {
+      if (id === MYID) continue;
+      if (now - peers[id].t > 12000) { if (vPeers[id]) vDrop(id); continue; }   // peer left or its phone went to sleep
+      vNames[id] = peers[id].name;
+      const p = vPeers[id];
+      if (!p && MYID > id) { await vCall(id); }
+      else if (p && MYID > id && ['failed', 'closed'].includes(p.pc.connectionState)) { await vCall(id); }
+    }
+    for (const id of Object.keys(vPeers)) if (!peers[id]) vDrop(id);
+    const sig = (await (await fetch(vBase() + '/sig/' + MYID + '.json', { cache: 'no-store' })).json()) || {};
+    for (const from of Object.keys(sig)) {
+      await fetch(vBase() + '/sig/' + MYID + '/' + from + '.json', { method: 'DELETE' });
+      if (Date.now() - sig[from].t < 20000) await vHandle(from, sig[from]);
+    }
+    vShowList();
+  } catch (e) { vInfo('Voice error: ' + e.message); }
+  vBusy = false;
+}
+function vDrop(id) { try { vPeers[id].pc.close(); } catch (_) {} delete vPeers[id]; const a = document.getElementById('au_' + id); if (a) a.remove(); }
+async function voiceJoin() {
+  if (vInVoice) { voiceLeave(); return; }
+  if (!joined) { alert('Tap Join room first.'); return; }
+  vRoom = roomCode(); const music = document.getElementById('music').checked;
+  try { vStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: !music, noiseSuppression: !music, autoGainControl: !music, channelCount: 1 } }); }
+  catch (e) { vStream = null; vInfo('Microphone not allowed (' + e.name + '): you will hear others but they will not hear you.'); }
+  await fetch(vBase() + '/sig/' + MYID + '.json', { method: 'DELETE' });
+  vInVoice = true; document.getElementById('vjoin').textContent = 'Leave voice';
+  vTimers = [setInterval(vTick, 1500)]; vTick();
+}
+function voiceLeave() {
+  vInVoice = false; vTimers.forEach(clearInterval); Object.keys(vPeers).forEach(vDrop);
+  if (vStream) vStream.getTracks().forEach(t => t.stop()); vStream = null;
+  fetch(vBase() + '/peers/' + MYID + '.json', { method: 'DELETE', keepalive: true });
+  document.getElementById('vjoin').textContent = 'Join voice'; vInfo('Left voice.');
+}
+function voiceMute() {
+  if (!vStream) return; const t = vStream.getAudioTracks()[0]; t.enabled = !t.enabled;
+  document.getElementById('vmute').textContent = t.enabled ? 'Mute me' : 'Unmute me';
+}
+addEventListener('pagehide', () => { if (vInVoice) fetch(vBase() + '/peers/' + MYID + '.json', { method: 'DELETE', keepalive: true }); });
 setInterval(drawClock, 25); syncClock();
 window.__t = { serverNow, localNow, get offset() { return offset; }, syncClock };
 </script>
