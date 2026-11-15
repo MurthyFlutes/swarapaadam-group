@@ -23,13 +23,13 @@
   .beat.one { border-color:#B07A1A; }
   .mono { font-family: ui-monospace, Consolas, monospace; font-size:.85em; line-height:1.5; white-space:pre-wrap; }
   body:not(.isadmin) .adm { display:none; }
-  #ytcard { display:none; } body.isadmin #ytcard, #ytcard.show { display:block; }
+  .dev, #ytcard { display:none !important; }
   .ok { color:var(--g); font-weight:700; } .warn { color:#C0392B; font-weight:700; }
 </style></head><body>
 <header>SwaraPaadam &middot; Group Practice</header>
 <main>
 
-<div class="card adm">
+<div class="card dev">
   <h2>Shared clock</h2>
   <div id="clock">--:--.---</div>
   <div class="mono" id="syncinfo">Not synced yet.</div>
@@ -71,7 +71,7 @@
   <div class="mono" id="recinfo" style="margin-top:6px">Records the mix of all voices + your MP3, and each singer on their own track. Files are saved to this computer's Downloads.</div>
 </div>
 
-<div class="card adm">
+<div class="card dev">
   <h2>Leader controls</h2>
   <div class="row">
     <div><label>Shruti (Sa)</label><select id="sa"></select></div>
@@ -85,7 +85,7 @@
   <div class="mono" style="margin-top:6px">Anyone in the room can press Start in this prototype. The last press wins.</div>
 </div>
 
-<div class="card adm">
+<div class="card dev">
   <div id="count"></div>
   <div class="beats" id="beatdots"></div>
 </div>
@@ -110,7 +110,7 @@
   <div class="mono" id="ytinfo" style="margin-top:6px">No video loaded. Join the room first.</div>
 </div>
 
-<div class="card adm">
+<div class="card dev">
   <h2>Accuracy check</h2>
   <div class="mono" id="acc">Start the room once; this shows how far the scheduled start was from the shared start.</div>
 </div>
@@ -305,7 +305,7 @@ let vMic = null, micSrc = null;
 function vInfo(t) { document.getElementById('voiceinfo').textContent = t; }
 function vShowList() {
   const ids = Object.keys(vPeers);
-  vInfo('[build g10] Room "' + decodeURIComponent(vRoom) + '", you=' + MYID.slice(0, 4) + ', ticks=' + vTicks + ', database sees ' + vSeen + (vErr ? '\nERROR: ' + vErr : '') + '\n' + (vMic ? 'Mic on' : 'Listen only (no mic)') + '. Connected: ' + (ids.length ? ids.map(i => (vNames[i] || i) + ' [' + vPeers[i].pc.connectionState + ']' + (vPeers[i].level ? ' hearing ' + '|'.repeat(Math.min(20, Math.round(vPeers[i].level() / 3))) : ' (no audio track yet)')).join(', ') : 'nobody else yet'));
+  vInfo('[build g11] Room "' + decodeURIComponent(vRoom) + '", you=' + MYID.slice(0, 4) + ', ticks=' + vTicks + ', database sees ' + vSeen + (vErr ? '\nERROR: ' + vErr : '') + '\n' + (vMic ? 'Mic on' : 'Listen only (no mic)') + '. Connected: ' + (ids.length ? ids.map(i => (vNames[i] || i) + ' [' + vPeers[i].pc.connectionState + ']' + (vPeers[i].level ? ' hearing ' + '|'.repeat(Math.min(20, Math.round(vPeers[i].level() / 3))) : ' (no audio track yet)')).join(', ') : 'nobody else yet'));
 }
 function waitIce(pc) { return new Promise(res => { if (pc.iceGatheringState === 'complete') return res(); const f = () => { if (pc.iceGatheringState === 'complete') { pc.removeEventListener('icegatheringstatechange', f); res(); } }; pc.addEventListener('icegatheringstatechange', f); setTimeout(res, 3500); }); }
 function opus(sdp) { return sdp.replace(/useinbandfec=1/g, 'useinbandfec=1;maxaveragebitrate=96000;stereo=0'); }
