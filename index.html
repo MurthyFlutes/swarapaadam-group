@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SwaraPaadam Group - synced clock (Firebase)</title>
+<style>
+  :root { --p:#9C2F5E; --pl:#D96A97; --bg:#FFF5F8; --card:#fff; --bd:#E8BFD0; --tx:#2A1520; --g:#1F9E55; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, "Segoe UI", sans-serif; background:var(--bg); color:var(--tx); }
+  header { background:var(--p); color:#fff; padding:14px 16px; font-weight:800; font-size:1.2em; }
+  main { max-width:520px; margin:0 auto; padding:12px; }
+  .card { background:var(--card); border:1px solid var(--bd); border-radius:14px; padding:12px; margin-bottom:12px; }
+  h2 { margin:0 0 8px; font-size:.8em; letter-spacing:1px; text-transform:uppercase; color:#B07A1A; }
+  label { display:block; font-size:.8em; color:#7A3E58; margin:6px 0 2px; }
+  input, select, button { font:inherit; padding:9px 10px; border-radius:10px; border:1px solid var(--bd); background:#fff; color:var(--tx); width:100%; }
+  button { background:var(--p); color:#fff; border:0; font-weight:700; cursor:pointer; }
+  button.alt { background:#fff; color:var(--p); border:2px solid var(--p); }
+  .row { display:flex; gap:8px; } .row > * { flex:1; }
+  #clock { font-size:2.6em; font-weight:800; text-align:center; font-variant-numeric: tabular-nums; color:var(--p); }
+  #count { font-size:5em; font-weight:800; text-align:center; min-height:1.1em; color:var(--g); }
+  .beats { display:flex; gap:8px; justify-content:center; flex-wrap:wrap; margin:6px 0; }
+  .beat { width:34px; height:34px; border-radius:50%; border:3px solid var(--bd); }
+  .beat.on { background:var(--pl); border-color:var(--p); }
+  .beat.one { border-color:#B07A1A; }
+  .mono { font-family: ui-monospace, Consolas, monospace; font-size:.85em; line-height:1.5; white-space:pre-wrap; }
+  .ok { color:var(--g); font-weight:700; } .warn { color:#C0392B; font-weight:700; }
+</style></head><body>
+<header>SwaraPaadam Group &middot; synced clock prototype</header>
+<main>
+
+<div class="card">
+  <h2>Shared clock</h2>
+  <div id="clock">--:--.---</div>
+  <div class="mono" id="syncinfo">Not synced yet.</div>
+  <div class="row" style="margin-top:8px"><button class="alt" onclick="syncClock()">Sync again</button></div>
+</div>
+
+<div class="card">
+  <h2>Room</h2>
+  <div class="row">
+    <div><label>Room code</label><input id="room" value="study"></div>
+    <div><label>Your name</label><input id="name" value="" placeholder="optional"></div>
+  </div>
+  <div style="margin-top:8px"><button id="join" onclick="join()">Join room (turns sound on)</button></div>
+  <div class="mono" id="roominfo" style="margin-top:6px">Not joined.</div>
+</div>
+
+<div class="card">
+  <h2>Leader controls</h2>
+  <div class="row">
+    <div><label>Shruti (Sa)</label><select id="sa"></select></div>
+    <div><label>BPM</label><input id="bpm" type="number" min="30" max="200" value="60"></div>
+    <div><label>Beats</label><select id="beats"><option value="8">8 (Adi)</option><option value="3">3 (Rupaka)</option><option value="5">5 (Khanda)</option><option value="7">7 (Misra)</option></select></div>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button onclick="leaderStart()">Start for everyone (in 3 s)</button>
+    <button class="alt" onclick="leaderStop()">Stop</button>
+  </div>
+  <div class="mono" style="margin-top:6px">Anyone in the room can press Start in this prototype. The last press wins.</div>
+</div>
+
+<div class="card">
+  <div id="count"></div>
+  <div class="beats" id="beatdots"></div>
+</div>
+
+<div class="card">
+  <h2>Accuracy check</h2>
+  <div class="mono" id="acc">Start the room once; this shows how far the scheduled start was from the shared start.</div>
+</div>
+
+</main>
+<script src="config.js"></script>
+<script>
+'use strict';
+// ── Firebase address (from config.js, or typed once and remembered on this phone) ──
+let DB = (window.DB_URL || localStorage.getItem('dburl') || '').replace(/\/+$/, '');
+if (!DB) { DB = (prompt('Paste the Firebase Realtime Database URL (https://...firebasedatabase.app):') || '').trim().replace(/\/+$/, ''); if (DB) localStorage.setItem('dburl', DB); }
+const MYID = Math.random().toString(36).slice(2, 10);
+// ── clock ───────────────────────────────────────────────
+// ?skew=7000 pretends this phone's clock is wrong by 7 seconds (to prove the sync cancels it out).
+const SKEW = +(new URLSearchParams(location.search).get('skew') || 0);
+const mono0 = performance.now(), wall0 = Date.now() + SKEW;
+// local clock that never jumps (wall time at load + monotonic time since)
+function localNow() { return wall0 + (performance.now() - mono0); }
+let offset = 0, synced = false, bestRtt = 0, spread = 0, nSamples = 0;
+function serverNow() { return localNow() + offset; }
+
+async function syncClock() {
+  const samples = [];
+  for (let i = 0; i < 16; i++) {
+    const t0 = localNow();
+    // Firebase stamps its own clock into the value we write; the reply carries it back
+    const s = await (await fetch(DB + '/clock/' + MYID + '.json', { method: 'PUT', body: '{".sv":"timestamp"}' })).json();
+    const t1 = localNow(), rtt = t1 - t0;
+    samples.push({ rtt, off: s - (t0 + rtt / 2) });
+    await new Promise(r => setTimeout(r, 40));
+  }
+  // the quickest round trips have the least network jitter: keep the best quarter, take the median
+  samples.sort((a, b) => a.rtt - b.rtt);
+  const best = samples.slice(0, 4).map(x => x.off).sort((a, b) => a - b);
+  offset = (best[1] + best[2]) / 2; spread = best[3] - best[0]; bestRtt = samples[0].rtt; nSamples = samples.length; synced = true;
+  document.getElementById('syncinfo').innerHTML =
+    'Clock offset to server: ' + offset.toFixed(1) + ' ms' + (SKEW ? ' (test skew ' + SKEW + ' ms)' : '') + '\n' +
+    'Best round trip: ' + bestRtt.toFixed(1) + ' ms &middot; spread of best 4: ' + spread.toFixed(1) + ' ms\n' +
+    '<span class="' + (spread < 15 ? 'ok' : 'warn') + '">' + (spread < 15 ? 'Good: clocks agree to about ' + Math.max(spread, bestRtt / 2).toFixed(0) + ' ms' : 'Weak Wi-Fi: sync again') + '</span>';
+}
+setInterval(() => { if (synced) syncClock(); }, 30000);   // clocks drift: re-check every 30 s
+function drawClock() {
+  const t = serverNow(), s = (t / 1000) % 60;
+  document.getElementById('clock').textContent = synced ? String(Math.floor(s)).padStart(2, '0') + '.' + String(Math.floor((t % 1000))).padStart(3, '0') : '--.---';
+
+}
+
+// ── sound ───────────────────────────────────────────────
+let ctx = null, drone = null;
+const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const saEl = document.getElementById('sa');
+NOTES.forEach((n, i) => { const o = document.createElement('option'); o.value = (130.81 * Math.pow(2, i / 12)).toFixed(2); o.textContent = n + '3'; saEl.appendChild(o); });
+saEl.value = NOTES.indexOf('D#') >= 0 ? (130.81 * Math.pow(2, 3 / 12)).toFixed(2) : saEl.value;
+// converts a server-time moment to this phone's audio-clock time
+function toAudioTime(serverMs) {
+  const lat = (ctx.outputLatency || 0) + (ctx.baseLatency || 0);   // hardware delay before the sound reaches the speaker
+  return ctx.currentTime + (serverMs - serverNow()) / 1000 - lat;
+}
+function click(whenAudio, accent) {
+  const o = ctx.createOscillator(), g = ctx.createGain();
+  o.frequency.value = accent ? 1500 : 1000; o.connect(g); g.connect(ctx.destination);
+  g.gain.setValueAtTime(0.0001, whenAudio); g.gain.exponentialRampToValueAtTime(accent ? 0.7 : 0.4, whenAudio + 0.003); g.gain.exponentialRampToValueAtTime(0.0001, whenAudio + 0.07);
+  o.start(whenAudio); o.stop(whenAudio + 0.1);
+}
+function startDrone(whenAudio, saHz) {
+  stopDrone();
+  const master = ctx.createGain(); master.gain.setValueAtTime(0.0001, whenAudio); master.gain.exponentialRampToValueAtTime(0.12, whenAudio + 1.2); master.connect(ctx.destination);
+  const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1400; f.connect(master);
+  const oscs = [saHz / 2, saHz, saHz, saHz * 1.5].map((hz, i) => { const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = hz; o.detune.value = i === 2 ? 4 : 0; o.connect(f); o.start(whenAudio); return o; });
+  drone = { master, oscs };
+}
+function stopDrone() {
+  if (!drone) return; const d = drone; drone = null;
+  const t = ctx.currentTime; d.master.gain.cancelScheduledValues(t); d.master.gain.setTargetAtTime(0.0001, t, 0.15);
+  d.oscs.forEach(o => o.stop(t + 1));
+}
+
+// ── room ────────────────────────────────────────────────
+let joined = false, room = {}, lastSeq = 0, nextBeat = 0, sched = null, firstSoundDelta = null;
+const dots = document.getElementById('beatdots');
+function drawDots(n) { dots.innerHTML = ''; for (let i = 0; i < n; i++) { const d = document.createElement('div'); d.className = 'beat' + (i === 0 ? ' one' : ''); dots.appendChild(d); } }
+drawDots(8);
+
+async function join() {
+  if (!synced) await syncClock();
+  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  await ctx.resume();
+  joined = true; document.getElementById('join').textContent = 'Joined';
+  poll(); setInterval(poll, 400); setInterval(schedule, 50); setInterval(visual, 25);
+}
+function roomCode() { return encodeURIComponent(document.getElementById('room').value.trim() || 'default'); }
+async function post(obj) { await fetch(DB + '/rooms/' + roomCode() + '.json', { method: 'PUT', body: JSON.stringify(obj) }); }
+function leaderStart() {
+  if (!synced) { alert('Join the room first (it syncs the clock).'); return; }
+  const n = +document.getElementById('beats').value;
+  post({ seq: Date.now(), running: true, sa: +saEl.value, bpm: +document.getElementById('bpm').value, beats: n, startAt: serverNow() + 3000, by: document.getElementById('name').value || 'leader' });
+}
+function leaderStop() { post({ seq: Date.now(), running: false, by: document.getElementById('name').value || 'leader' }); }
+
+async function poll() {
+  if (!joined) return;
+  let r; try { r = await (await fetch(DB + '/rooms/' + roomCode() + '.json', { cache: 'no-store' })).json(); } catch (_) { return; }
+  if (!r || !r.seq || r.seq === lastSeq) return;
+  lastSeq = r.seq; room = r; firstSoundDelta = null;
+  if (!r.running) { stopDrone(); document.getElementById('roominfo').textContent = 'Stopped by ' + (r.by || '?'); document.getElementById('count').textContent = ''; return; }
+  drawDots(r.beats); document.getElementById('beats').value = r.beats; document.getElementById('bpm').value = r.bpm;
+  const period = 60000 / r.bpm, late = serverNow() - r.startAt;
+  nextBeat = late > 0 ? Math.ceil(late / period) : 0;            // late joiners drop in on the next beat
+  startDrone(toAudioTime(Math.max(r.startAt, serverNow() + 50)), r.sa);
+  document.getElementById('roominfo').textContent = 'Running: started by ' + (r.by || '?') + ', ' + r.bpm + ' BPM, ' + r.beats + ' beats' + (late > 0 ? ' (you joined ' + (late / 1000).toFixed(1) + ' s late)' : '');
+}
+function schedule() {   // look ahead 250 ms and queue every beat that falls inside it
+  if (!joined || !room.running) return;
+  const period = 60000 / room.bpm;
+  while (room.startAt + nextBeat * period < serverNow() + 250) {
+    const tS = room.startAt + nextBeat * period, tA = toAudioTime(tS);
+    if (tA > ctx.currentTime - 0.02) {
+      click(Math.max(tA, ctx.currentTime), nextBeat % room.beats === 0);
+      if (nextBeat === 0) { const err = tA - ctx.currentTime; firstSoundDelta = { queuedAhead: err * 1000 }; }
+    }
+    nextBeat++;
+  }
+}
+function visual() {
+
+  const cnt = document.getElementById('count');
+  if (!room.running) return;
+  const t = serverNow() - room.startAt, period = 60000 / room.bpm;
+  if (t < 0) { cnt.textContent = Math.ceil(-t / 1000); return; }
+  cnt.textContent = '';
+  const k = Math.floor(t / period), within = t - k * period, idx = k % room.beats;
+  [...dots.children].forEach((d, i) => d.classList.toggle('on', i === idx && within < Math.min(180, period * .6)));
+}
+// accuracy panel: where the first click of this run was queued relative to the shared start
+setInterval(() => {
+  if (!room.running || !firstSoundDelta) return;
+  document.getElementById('acc').innerHTML = 'First click queued ' + firstSoundDelta.queuedAhead.toFixed(0) + ' ms ahead of its slot on this phone\'s audio clock.\nSlot = shared start ' + new Date(room.startAt).toISOString().slice(11, 23) + ' (server time).\nSound hardware delay on this phone: ' + (((ctx.outputLatency || 0) + (ctx.baseLatency || 0)) * 1000).toFixed(0) + ' ms, already subtracted.';
+}, 500);
+setInterval(drawClock, 25); syncClock();
+window.__t = { serverNow, localNow, get offset() { return offset; }, syncClock };
+</script>
+</body></html>
