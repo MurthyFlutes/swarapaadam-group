@@ -302,7 +302,7 @@ let vMic = null, micSrc = null;
 function vInfo(t) { document.getElementById('voiceinfo').textContent = t; }
 function vShowList() {
   const ids = Object.keys(vPeers);
-  vInfo((vMic ? 'Mic on' : 'Listen only (no mic)') + '. Connected: ' + (ids.length ? ids.map(i => (vNames[i] || i) + ' [' + vPeers[i].pc.connectionState + ']' + (vPeers[i].level ? ' hearing ' + '|'.repeat(Math.min(20, Math.round(vPeers[i].level() / 3))) : ' (no audio track yet)')).join(', ') : 'nobody else yet'));
+  vInfo('[build g8] Room "' + decodeURIComponent(vRoom) + '", you=' + MYID.slice(0, 4) + ', ticks=' + vTicks + ', database sees ' + vSeen + (vErr ? '\nERROR: ' + vErr : '') + '\n' + (vMic ? 'Mic on' : 'Listen only (no mic)') + '. Connected: ' + (ids.length ? ids.map(i => (vNames[i] || i) + ' [' + vPeers[i].pc.connectionState + ']' + (vPeers[i].level ? ' hearing ' + '|'.repeat(Math.min(20, Math.round(vPeers[i].level() / 3))) : ' (no audio track yet)')).join(', ') : 'nobody else yet'));
 }
 function waitIce(pc) { return new Promise(res => { if (pc.iceGatheringState === 'complete') return res(); const f = () => { if (pc.iceGatheringState === 'complete') { pc.removeEventListener('icegatheringstatechange', f); res(); } }; pc.addEventListener('icegatheringstatechange', f); setTimeout(res, 3500); }); }
 function opus(sdp) { return sdp.replace(/useinbandfec=1/g, 'useinbandfec=1;maxaveragebitrate=96000;stereo=0'); }
@@ -329,14 +329,17 @@ async function vHandle(from, m) {
     await vPeers[from].pc.setRemoteDescription({ type: 'answer', sdp: m.sdp });
   }
 }
-let vBusy = false;
+let vBusy = false, vTicks = 0, vSeen = 'nobody', vErr = '', vBusySince = 0;
 async function vTick() {
-  if (!vInVoice || vBusy) return; vBusy = true;
+  if (!vInVoice) return;
+  if (vBusy && Date.now() - vBusySince > 20000) vBusy = false;   // a stuck round must never block the next ones
+  if (vBusy) return; vBusy = true; vBusySince = Date.now();
   try {
     const nm = document.getElementById('name').value.trim();
     await fetch(vBase() + '/peers/' + MYID + '.json', { method: 'PUT', body: JSON.stringify({ t: serverNow(), name: nm || ('guest-' + MYID.slice(0, 3)) }) });
     const peers = (await (await fetch(vBase() + '/peers.json', { cache: 'no-store' })).json()) || {};
     const now = serverNow();
+    vSeen = Object.keys(peers).map(i => (peers[i].name || i) + (i === MYID ? '(me)' : '') + (now - peers[i].t > 12000 ? '(stale ' + ((now - peers[i].t) / 1000).toFixed(0) + 's)' : '')).join(', ') || 'nobody';
     for (const id of Object.keys(peers)) {
       if (id === MYID) continue;
       if (now - peers[id].t > 12000) { if (vPeers[id]) vDrop(id); continue; }   // peer left or its phone went to sleep
@@ -351,8 +354,8 @@ async function vTick() {
       await fetch(vBase() + '/sig/' + MYID + '/' + from + '.json', { method: 'DELETE' });
       if (Date.now() - sig[from].t < 20000) await vHandle(from, sig[from]);
     }
-    vShowList();
-  } catch (e) { vInfo('Voice error: ' + e.message); }
+    vTicks++; vErr = '';
+  } catch (e) { vErr = e.name + ': ' + e.message; }
   vBusy = false;
 }
 function vDrop(id) { try { vPeers[id].pc.close(); } catch (_) {} delete vPeers[id]; const a = document.getElementById('au_' + id); if (a) a.remove(); }
