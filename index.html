@@ -26,7 +26,7 @@
   .dev, #ytcard { display:none !important; }
   .ok { color:var(--g); font-weight:700; } .warn { color:#C0392B; font-weight:700; }
 </style></head><body>
-<header>SwaraPaadam &middot; Group Practice</header>
+<header>SwaraPaadam &middot; Group Practice <span style="font-size:.55em;font-weight:400;opacity:.8">v14</span></header>
 <main>
 
 <div class="card dev">
@@ -412,7 +412,10 @@ addEventListener('pagehide', () => { if (vInVoice) fetch(vBase() + '/peers/' + M
 const qRoom = new URLSearchParams(location.search).get('room'); if (qRoom) document.getElementById('room').value = qRoom;
 async function joinAll() {
   const b = document.getElementById('join'), f = document.getElementById('friendly');
-  if (vInVoice) { voiceLeave(); b.textContent = 'Join and sing'; f.textContent = 'You left. Tap Join and sing to come back.'; return; }
+  if (vInVoice) {   // Leave = full stop: close everything, then reload the page so no sound can possibly remain
+    voiceLeave(); b.disabled = true; f.textContent = 'You left.';
+    setTimeout(() => { location.href = location.pathname + '?room=' + roomCode(); }, 600); return;
+  }
   b.disabled = true; f.textContent = 'Joining... allow the microphone if asked.';
   try { if (!joined) await join(); await voiceJoin(); } catch (e) { f.textContent = 'Could not join: ' + e.message; b.disabled = false; return; }
   b.disabled = false; b.textContent = vInVoice ? 'Leave' : 'Join and sing';
