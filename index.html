@@ -22,6 +22,7 @@
   .beat.on { background:var(--pl); border-color:var(--p); }
   .beat.one { border-color:#B07A1A; }
   .mono { font-family: ui-monospace, Consolas, monospace; font-size:.85em; line-height:1.5; white-space:pre-wrap; }
+  body:not(.isadmin) .adm { display:none; }
   .ok { color:var(--g); font-weight:700; } .warn { color:#C0392B; font-weight:700; }
 </style></head><body>
 <header>SwaraPaadam Group &middot; synced clock prototype</header>
@@ -45,6 +46,30 @@
 </div>
 
 <div class="card">
+  <h2>Admin</h2>
+  <div class="row">
+    <div><label>Admin PIN (first person to set it owns the room)</label><input id="pin" type="password" placeholder="choose a PIN" autocomplete="off"></div>
+    <div style="align-self:flex-end"><button onclick="claimAdmin()">Become admin</button></div>
+  </div>
+  <div class="mono" id="admininfo" style="margin-top:6px">You are a singer. Only the admin controls the music.</div>
+</div>
+
+<div class="card adm">
+  <h2>MP3 from this computer (admin)</h2>
+  <input type="file" id="mp3file" accept="audio/*">
+  <div class="row" style="margin-top:8px"><button onclick="mp3Play()">Play</button><button class="alt" onclick="mp3Pause()">Pause</button><button class="alt" onclick="mp3Stop()">Stop</button></div>
+  <div class="row" style="margin-top:8px"><button class="alt" onclick="mp3Skip(-10)">-10 s</button><button class="alt" onclick="mp3Skip(10)">+10 s</button></div>
+  <label>MP3 volume to everyone</label><input type="range" id="mp3vol" min="0" max="1" step="0.05" value="0.8" oninput="mp3Vol()">
+  <div class="mono" id="mp3info" style="margin-top:6px">Pick a file. It is sent to everyone through your voice stream, so join voice first (earphones on).</div>
+</div>
+
+<div class="card adm">
+  <h2>Recording (admin)</h2>
+  <div class="row"><button onclick="recStart()" id="recbtn">Record everyone</button><button class="alt" onclick="recStop()">Stop &amp; save</button></div>
+  <div class="mono" id="recinfo" style="margin-top:6px">Records the mix of all voices + your MP3, and each singer on their own track. Files are saved to this computer's Downloads.</div>
+</div>
+
+<div class="card adm">
   <h2>Leader controls</h2>
   <div class="row">
     <div><label>Shruti (Sa)</label><select id="sa"></select></div>
@@ -73,12 +98,12 @@
 
 <div class="card">
   <h2>YouTube for everyone</h2>
-  <label>YouTube link (paste, then Load for everyone)</label>
+  <div class="adm"><label>YouTube link (paste, then Load for everyone)</label>
   <input id="yturl" placeholder="https://www.youtube.com/watch?v=...">
-  <div class="row" style="margin-top:8px"><button onclick="vLoad()">Load for everyone</button></div>
+  <div class="row" style="margin-top:8px"><button onclick="vLoad()">Load for everyone</button></div></div>
   <div style="margin:8px 0;position:relative;width:100%;aspect-ratio:16/9;background:#000;border-radius:10px;overflow:hidden"><div id="ytplayer"></div></div>
-  <div class="row"><button onclick="vPlay()">Play for everyone</button><button class="alt" onclick="vPause()">Pause</button></div>
-  <div class="row" style="margin-top:8px"><button class="alt" onclick="vNudge(-10)">-10 s</button><button class="alt" onclick="vNudge(10)">+10 s</button><button class="alt" onclick="vNudge(-5)">-5 s</button></div>
+  <div class="adm"><div class="row"><button onclick="vPlay()">Play for everyone</button><button class="alt" onclick="vPause()">Pause</button><button class="alt" onclick="vStop()">Stop</button></div>
+  <div class="row" style="margin-top:8px"><button class="alt" onclick="vNudge(-10)">-10 s</button><button class="alt" onclick="vNudge(10)">+10 s</button><button class="alt" onclick="vNudge(-5)">-5 s</button></div></div>
   <div class="mono" id="ytinfo" style="margin-top:6px">No video loaded. Join the room first.</div>
 </div>
 
@@ -174,7 +199,7 @@ async function join() {
   poll(); setInterval(poll, 400); setInterval(schedule, 50); setInterval(visual, 25);
 }
 function roomCode() { return encodeURIComponent(document.getElementById('room').value.trim() || 'default'); }
-async function post(obj) { await fetch(DB + '/rooms/' + roomCode() + '/beat.json', { method: 'PUT', body: JSON.stringify(obj) }); }
+async function post(obj) { if (!isAdmin) return; await fetch(DB + '/rooms/' + roomCode() + '/beat.json', { method: 'PUT', body: JSON.stringify(obj) }); }
 function leaderStart() {
   if (!synced) { alert('Join the room first (it syncs the clock).'); return; }
   const n = +document.getElementById('beats').value;
@@ -235,11 +260,12 @@ function ytId(s) {
   return m ? m[1] : null;
 }
 function vPos() { if (!vid) return 0; return vid.playing ? vid.basePos + Math.max(0, (serverNow() - vid.baseAt) / 1000) : vid.basePos; }
-async function putVideo(o) { o.seq = Date.now(); await fetch(DB + '/rooms/' + roomCode() + '/video.json', { method: 'PUT', body: JSON.stringify(o) }); poll(); }
+async function putVideo(o) { if (!isAdmin) return; o.seq = Date.now(); await fetch(DB + '/rooms/' + roomCode() + '/video.json', { method: 'PUT', body: JSON.stringify(o) }); poll(); }
 function needJoin() { if (!joined) { alert('Tap Join room first.'); return true; } return false; }
 function vLoad() { if (needJoin()) return; const id = ytId(document.getElementById('yturl').value); if (!id) { alert('Could not find a YouTube video link.'); return; } putVideo({ id, playing: false, basePos: 0, baseAt: 0 }); }
 function vPlay() { if (needJoin() || !vid) return; putVideo({ id: vid.id, playing: true, basePos: vPos(), baseAt: serverNow() + 2000 }); }
 function vPause() { if (needJoin() || !vid) return; putVideo({ id: vid.id, playing: false, basePos: vPos(), baseAt: 0 }); }
+function vStop() { if (needJoin() || !vid) return; putVideo({ id: vid.id, playing: false, basePos: 0, baseAt: 0 }); }
 function vNudge(d) { if (needJoin() || !vid) return; const p = Math.max(0, vPos() + d); putVideo({ id: vid.id, playing: vid.playing, basePos: p, baseAt: vid.playing ? serverNow() + 1500 : 0 }); }
 function applyVideo(v, force) {
   if (!force && v.seq === lastVSeq) return;
@@ -272,10 +298,11 @@ setInterval(() => {   // every 150 ms: bring this phone's player to where the ro
 const ICE = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
 let vInVoice = false, vStream = null, vPeers = {}, vNames = {}, vRoom = '', vTimers = [];
 function vBase() { return DB + '/rooms/' + vRoom; }
+let vMic = null, micSrc = null;
 function vInfo(t) { document.getElementById('voiceinfo').textContent = t; }
 function vShowList() {
   const ids = Object.keys(vPeers);
-  vInfo((vStream ? 'Mic on' : 'Listen only (no mic)') + '. Connected: ' + (ids.length ? ids.map(i => (vNames[i] || i) + ' [' + vPeers[i].pc.connectionState + ']').join(', ') : 'nobody else yet'));
+  vInfo((vMic ? 'Mic on' : 'Listen only (no mic)') + '. Connected: ' + (ids.length ? ids.map(i => (vNames[i] || i) + ' [' + vPeers[i].pc.connectionState + ']').join(', ') : 'nobody else yet'));
 }
 function waitIce(pc) { return new Promise(res => { if (pc.iceGatheringState === 'complete') return res(); const f = () => { if (pc.iceGatheringState === 'complete') { pc.removeEventListener('icegatheringstatechange', f); res(); } }; pc.addEventListener('icegatheringstatechange', f); setTimeout(res, 3500); }); }
 function opus(sdp) { return sdp.replace(/useinbandfec=1/g, 'useinbandfec=1;maxaveragebitrate=96000;stereo=0'); }
@@ -283,7 +310,7 @@ function vNewPc(id) {
   if (vPeers[id]) { try { vPeers[id].pc.close(); } catch (_) {} const old = document.getElementById('au_' + id); if (old) old.remove(); }
   const pc = new RTCPeerConnection(ICE); vPeers[id] = { pc };
   if (vStream) vStream.getTracks().forEach(t => pc.addTrack(t, vStream)); else pc.addTransceiver('audio', { direction: 'recvonly' });
-  pc.ontrack = e => { let a = document.getElementById('au_' + id); if (!a) { a = document.createElement('audio'); a.id = 'au_' + id; a.autoplay = true; a.playsInline = true; document.getElementById('voiceaudio').appendChild(a); } a.srcObject = e.streams[0]; a.play().catch(() => {}); };
+  pc.ontrack = e => { vPeers[id].stream = e.streams[0]; if (rec) recAddPeer(id, e.streams[0]); let a = document.getElementById('au_' + id); if (!a) { a = document.createElement('audio'); a.id = 'au_' + id; a.autoplay = true; a.playsInline = true; document.getElementById('voiceaudio').appendChild(a); } a.srcObject = e.streams[0]; a.play().catch(() => {}); };
   pc.onconnectionstatechange = vShowList;
   return pc;
 }
@@ -332,23 +359,107 @@ async function voiceJoin() {
   if (vInVoice) { voiceLeave(); return; }
   if (!joined) { alert('Tap Join room first.'); return; }
   vRoom = roomCode(); const music = document.getElementById('music').checked;
-  try { vStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: !music, noiseSuppression: !music, autoGainControl: !music, channelCount: 1 } }); }
-  catch (e) { vStream = null; vInfo('Microphone not allowed (' + e.name + '): you will hear others but they will not hear you.'); }
+  let mic = null;
+  try { mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: !music, noiseSuppression: !music, autoGainControl: !music, channelCount: 1 } }); }
+  catch (e) { vInfo('Microphone not allowed (' + e.name + '): you will hear others but they will not hear you.'); }
+  vMic = mic;
+  if (isAdmin) {   // the admin's outgoing stream = mic + MP3 mixed, so everyone hears the MP3 without any extra connection
+    ensureAdminGraph();
+    if (mic) { micSrc = ctx.createMediaStreamSource(mic); micSrc.connect(adminDest); }
+    vStream = adminDest.stream;
+  } else vStream = mic;
   await fetch(vBase() + '/sig/' + MYID + '.json', { method: 'DELETE' });
   vInVoice = true; document.getElementById('vjoin').textContent = 'Leave voice';
   vTimers = [setInterval(vTick, 1500)]; vTick();
 }
 function voiceLeave() {
   vInVoice = false; vTimers.forEach(clearInterval); Object.keys(vPeers).forEach(vDrop);
-  if (vStream) vStream.getTracks().forEach(t => t.stop()); vStream = null;
+  if (vMic) vMic.getTracks().forEach(t => t.stop()); vMic = null; vStream = null;
+  if (micSrc) { try { micSrc.disconnect(); } catch (_) {} micSrc = null; }
   fetch(vBase() + '/peers/' + MYID + '.json', { method: 'DELETE', keepalive: true });
   document.getElementById('vjoin').textContent = 'Join voice'; vInfo('Left voice.');
 }
 function voiceMute() {
-  if (!vStream) return; const t = vStream.getAudioTracks()[0]; t.enabled = !t.enabled;
+  if (!vMic) return; const t = vMic.getAudioTracks()[0]; t.enabled = !t.enabled;
   document.getElementById('vmute').textContent = t.enabled ? 'Mute me' : 'Unmute me';
 }
 addEventListener('pagehide', () => { if (vInVoice) fetch(vBase() + '/peers/' + MYID + '.json', { method: 'DELETE', keepalive: true }); });
+// ── admin ───────────────────────────────────────────────
+// The PIN is stored (hashed) in the room. This hides the controls and ignores non-admin writes in this page;
+// it is not tamper-proof against someone who edits the page themselves (that needs Firebase sign-in rules).
+let isAdmin = false;
+async function sha(s) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
+function setAdmin(v, msg) {
+  isAdmin = v; document.body.classList.toggle('isadmin', v);
+  document.getElementById('admininfo').textContent = msg;
+  if (v && vInVoice) { voiceLeave(); document.getElementById('admininfo').textContent += ' Voice was restarted so your MP3 can be sent: tap Join voice again.'; }
+}
+async function claimAdmin() {
+  const pin = document.getElementById('pin').value.trim();
+  if (pin.length < 4) { alert('Use a PIN of at least 4 characters.'); return; }
+  const room = roomCode(), h = await sha(room + ':' + pin), url = DB + '/rooms/' + room + '/admin.json';
+  const cur = await (await fetch(url, { cache: 'no-store' })).json();
+  if (!cur) { await fetch(url, { method: 'PUT', body: JSON.stringify(h) }); setAdmin(true, 'PIN set. You are the admin of room "' + decodeURIComponent(room) + '".'); }
+  else if (cur === h) setAdmin(true, 'Welcome back, admin.');
+  else setAdmin(false, 'Wrong PIN: this room already has an admin.');
+}
+
+// ── admin MP3 (played here, mixed into the admin voice stream) ──
+let adminDest = null, mp3Gain = null, mp3El = null;
+function ensureAdminGraph() {
+  if (adminDest) return;
+  adminDest = ctx.createMediaStreamDestination(); mp3Gain = ctx.createGain(); mp3Gain.gain.value = +document.getElementById('mp3vol').value;
+  mp3Gain.connect(adminDest); mp3Gain.connect(ctx.destination);
+}
+document.getElementById('mp3file').addEventListener('change', e => {
+  const f = e.target.files[0]; if (!f) return;
+  if (!ctx) { alert('Tap Join room first.'); return; }
+  ensureAdminGraph(); if (mp3El) { mp3El.pause(); URL.revokeObjectURL(mp3El.src); }
+  mp3El = new Audio(URL.createObjectURL(f)); mp3El.crossOrigin = 'anonymous';
+  ctx.createMediaElementSource(mp3El).connect(mp3Gain);
+  mp3El.onended = () => mp3Info('Finished.');
+  mp3Info('Loaded: ' + f.name + (vInVoice ? '' : '  (join voice so everyone hears it)'));
+});
+function mp3Info(t) { document.getElementById('mp3info').textContent = t; }
+function mp3Play() { if (!mp3El) { alert('Pick an MP3 first.'); return; } ctx.resume(); mp3El.play(); mp3Info('Playing for everyone' + (vInVoice ? '' : ' (not in voice: only you hear it)')); }
+function mp3Pause() { if (mp3El) { mp3El.pause(); mp3Info('Paused at ' + mp3El.currentTime.toFixed(1) + ' s'); } }
+function mp3Stop() { if (mp3El) { mp3El.pause(); mp3El.currentTime = 0; mp3Info('Stopped.'); } }
+function mp3Skip(d) { if (mp3El) mp3El.currentTime = Math.max(0, mp3El.currentTime + d); }
+function mp3Vol() { if (mp3Gain) mp3Gain.gain.value = +document.getElementById('mp3vol').value; }
+
+// ── admin recording: one mixed file + each singer on a separate track ──
+let rec = null;
+function recAddPeer(id, stream) {
+  if (!rec || rec.tracks[id]) return;
+  ctx.createMediaStreamSource(stream).connect(rec.mix);
+  rec.tracks[id] = recorder(stream);
+}
+function recorder(stream) { const chunks = [], r = new MediaRecorder(stream); r.ondataavailable = e => e.data.size && chunks.push(e.data); r.start(1000); return { r, chunks }; }
+function recStart() {
+  if (!isAdmin || rec) return; if (!ctx) { alert('Tap Join room first.'); return; }
+  ensureAdminGraph();
+  const mix = ctx.createMediaStreamDestination(); mp3Gain.connect(mix); if (micSrc) micSrc.connect(mix);
+  rec = { mix, mixSrcs: [], tracks: {}, t0: Date.now(), room: decodeURIComponent(roomCode()) };
+  rec.mixRec = recorder(mix.stream);
+  if (vMic) rec.me = recorder(vMic);
+  Object.keys(vPeers).forEach(id => vPeers[id].stream && recAddPeer(id, vPeers[id].stream));
+  document.getElementById('recbtn').textContent = 'Recording...';
+  rec.timer = setInterval(() => { document.getElementById('recinfo').textContent = 'Recording ' + ((Date.now() - rec.t0) / 1000).toFixed(0) + ' s. Singers on their own track: ' + Object.keys(rec.tracks).length + (vInVoice ? '' : ' (you are not in voice, so no one is heard)'); }, 1000);
+}
+function save(chunks, name) {
+  const b = new Blob(chunks, { type: 'audio/webm' }), a = document.createElement('a');
+  a.href = URL.createObjectURL(b); a.download = name + '.webm'; document.body.appendChild(a); a.click(); setTimeout(() => { a.remove(); URL.revokeObjectURL(a.href); }, 5000);
+}
+async function recStop() {
+  if (!rec) return; const R = rec; rec = null; clearInterval(R.timer);
+  const all = [['MIX_all', R.mixRec]]; if (R.me) all.push(['admin', R.me]);
+  Object.keys(R.tracks).forEach(id => all.push([vNames[id] || id, R.tracks[id]]));
+  await Promise.all(all.map(([, x]) => new Promise(res => { x.r.onstop = res; x.r.state !== 'inactive' ? x.r.stop() : res(); })));
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+  all.forEach(([n, x], i) => setTimeout(() => save(x.chunks, 'swarapaadam_' + R.room + '_' + stamp + '_' + String(n).replace(/[^\w-]+/g, '_')), i * 600));
+  document.getElementById('recbtn').textContent = 'Record everyone';
+  document.getElementById('recinfo').textContent = 'Saved ' + all.length + ' file(s) to Downloads (allow multiple downloads if the browser asks).';
+}
 setInterval(drawClock, 25); syncClock();
 window.__t = { serverNow, localNow, get offset() { return offset; }, syncClock };
 </script>
