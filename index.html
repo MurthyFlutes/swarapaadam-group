@@ -26,7 +26,7 @@
   .dev, #ytcard { display:none !important; }
   .ok { color:var(--g); font-weight:700; } .warn { color:#C0392B; font-weight:700; }
 </style></head><body>
-<header>SwaraPaadam &middot; Group Practice <span style="font-size:.55em;font-weight:400;opacity:.8">v15</span></header>
+<header>SwaraPaadam &middot; Group Practice <span style="font-size:.55em;font-weight:400;opacity:.8">v16</span></header>
 <main>
 
 <div class="card dev">
@@ -58,7 +58,7 @@
 
 <div class="card adm">
   <h2>MP3 from this computer (admin)</h2>
-  <input type="file" id="mp3file" accept="audio/*">
+  <input type="file" id="mp3file" accept=".mp3,.m4a,.wav,.ogg,.aac,.flac,audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/ogg">
   <div class="row" style="margin-top:8px"><button onclick="mp3Play()">Play</button><button class="alt" onclick="mp3Pause()">Pause</button><button class="alt" onclick="mp3Stop()">Stop</button></div>
   <div class="row" style="margin-top:8px"><button class="alt" onclick="mp3Skip(-10)">-10 s</button><button class="alt" onclick="mp3Skip(10)">+10 s</button></div>
   <label>MP3 volume to everyone</label><input type="range" id="mp3vol" min="0" max="1" step="0.05" value="0.8" oninput="mp3Vol()">
