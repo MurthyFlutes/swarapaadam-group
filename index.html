@@ -26,7 +26,7 @@
   .dev, #ytcard { display:none !important; }
   .ok { color:var(--g); font-weight:700; } .warn { color:#C0392B; font-weight:700; }
 </style></head><body>
-<header>SwaraPaadam &middot; Group Practice <span style="font-size:.55em;font-weight:400;opacity:.8">v14</span></header>
+<header>SwaraPaadam &middot; Group Practice <span style="font-size:.55em;font-weight:400;opacity:.8">v15</span></header>
 <main>
 
 <div class="card dev">
@@ -213,7 +213,7 @@ function leaderStop() { post({ seq: Date.now(), running: false, by: document.get
 async function poll() {
   if (!joined) return;
   let all; try { all = await (await fetch(DB + '/rooms/' + roomCode() + '.json', { cache: 'no-store' })).json(); } catch (_) { return; }
-  if (all && all.video) applyVideo(all.video);
+  /* YouTube off: video state in the room is ignored */
   const r = all && all.beat;
   if (!r || !r.seq || r.seq === lastSeq) return;
   lastSeq = r.seq; room = r; firstSoundDelta = null;
@@ -254,7 +254,8 @@ setInterval(() => {
 // ── synced YouTube ──────────────────────────────────────
 // Room stores {seq,id,playing,basePos,baseAt}: the video is at basePos seconds at server time baseAt, then runs in real time.
 let yt = null, ytReady = false, vid = null, vidLoadedId = null, lastVSeq = 0, lastFix = 0, ytMsg = '';
-const tag = document.createElement('script'); tag.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(tag);
+const YT_ON = false;   // YouTube is switched off for now (MP3 only)
+if (YT_ON) { const tag = document.createElement('script'); tag.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(tag); }
 window.onYouTubeIframeAPIReady = () => {
   yt = new YT.Player('ytplayer', { width: '100%', height: '100%', playerVars: { playsinline: 1, rel: 0 }, events: { onReady: () => { ytReady = true; if (vid) applyVideo(vid, true); } } });
 };
