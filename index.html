@@ -23,12 +23,13 @@
   .beat.one { border-color:#B07A1A; }
   .mono { font-family: ui-monospace, Consolas, monospace; font-size:.85em; line-height:1.5; white-space:pre-wrap; }
   body:not(.isadmin) .adm { display:none; }
+  #ytcard { display:none; } body.isadmin #ytcard, #ytcard.show { display:block; }
   .ok { color:var(--g); font-weight:700; } .warn { color:#C0392B; font-weight:700; }
 </style></head><body>
-<header>SwaraPaadam Group &middot; synced clock prototype</header>
+<header>SwaraPaadam &middot; Group Practice</header>
 <main>
 
-<div class="card">
+<div class="card adm">
   <h2>Shared clock</h2>
   <div id="clock">--:--.---</div>
   <div class="mono" id="syncinfo">Not synced yet.</div>
@@ -41,18 +42,19 @@
     <div><label>Room code</label><input id="room" value="study"></div>
     <div><label>Your name</label><input id="name" value="" placeholder="optional"></div>
   </div>
-  <div style="margin-top:8px"><button id="join" onclick="join()">Join room (turns sound on)</button></div>
-  <div class="mono" id="roominfo" style="margin-top:6px">Not joined.</div>
+  <div style="margin-top:10px"><button id="join" onclick="joinAll()" style="font-size:1.15em;padding:14px">Join and sing</button></div>
+  <div id="friendly" style="margin-top:8px;font-weight:600">Wear earphones, then tap Join and sing.</div>
+  <div class="mono adm" id="roominfo" style="margin-top:6px">Not joined.</div>
 </div>
 
-<div class="card">
-  <h2>Admin</h2>
+<details class="card" id="admindet">
+  <summary style="cursor:pointer;color:#7A3E58;font-size:.85em">Admin login</summary>
   <div class="row">
     <div><label>Admin PIN (first person to set it owns the room)</label><input id="pin" type="password" placeholder="choose a PIN" autocomplete="off"></div>
     <div style="align-self:flex-end"><button onclick="claimAdmin()">Become admin</button></div>
   </div>
   <div class="mono" id="admininfo" style="margin-top:6px">You are a singer. Only the admin controls the music.</div>
-</div>
+</details>
 
 <div class="card adm">
   <h2>MP3 from this computer (admin)</h2>
@@ -83,20 +85,21 @@
   <div class="mono" style="margin-top:6px">Anyone in the room can press Start in this prototype. The last press wins.</div>
 </div>
 
-<div class="card">
+<div class="card adm">
   <div id="count"></div>
   <div class="beats" id="beatdots"></div>
 </div>
 
-<div class="card">
-  <h2>Voices (talk and sing together)</h2>
-  <label><input type="checkbox" id="music" style="width:auto"> Music mode: no echo-cancel / noise filter (use earphones!)</label>
-  <div class="row" style="margin-top:8px"><button onclick="voiceJoin()" id="vjoin">Join voice</button><button class="alt" onclick="voiceMute()" id="vmute">Mute me</button></div>
-  <div class="mono" id="voiceinfo" style="margin-top:6px">Not in voice. Use earphones, or others will hear the video twice.</div>
+<div class="card adm">
+  <div class="row"><button class="alt" onclick="voiceMute()" id="vmute">Mute me</button></div>
+  <label style="margin-top:10px"><input type="checkbox" id="music" style="width:auto"> Better singing sound (earphones only)</label>
+  <button id="vjoin" style="display:none"></button>
+  <details style="margin-top:8px"><summary style="cursor:pointer;color:#7A3E58;font-size:.8em">Connection details</summary>
+  <div class="mono" id="voiceinfo" style="margin-top:6px">Not in voice.</div></details>
   <div id="voiceaudio"></div>
 </div>
 
-<div class="card">
+<div class="card" id="ytcard">
   <h2>YouTube for everyone</h2>
   <div class="adm"><label>YouTube link (paste, then Load for everyone)</label>
   <input id="yturl" placeholder="https://www.youtube.com/watch?v=...">
@@ -107,7 +110,7 @@
   <div class="mono" id="ytinfo" style="margin-top:6px">No video loaded. Join the room first.</div>
 </div>
 
-<div class="card">
+<div class="card adm">
   <h2>Accuracy check</h2>
   <div class="mono" id="acc">Start the room once; this shows how far the scheduled start was from the shared start.</div>
 </div>
@@ -269,7 +272,7 @@ function vStop() { if (needJoin() || !vid) return; putVideo({ id: vid.id, playin
 function vNudge(d) { if (needJoin() || !vid) return; const p = Math.max(0, vPos() + d); putVideo({ id: vid.id, playing: vid.playing, basePos: p, baseAt: vid.playing ? serverNow() + 1500 : 0 }); }
 function applyVideo(v, force) {
   if (!force && v.seq === lastVSeq) return;
-  lastVSeq = v.seq; vid = v;
+  lastVSeq = v.seq; vid = v; document.getElementById('ytcard').classList.add('show');
   if (ytReady && vidLoadedId !== v.id) { vidLoadedId = v.id; yt.cueVideoById(v.id, v.basePos || 0); }
 }
 setInterval(() => {   // every 150 ms: bring this phone's player to where the room says it should be
@@ -302,7 +305,7 @@ let vMic = null, micSrc = null;
 function vInfo(t) { document.getElementById('voiceinfo').textContent = t; }
 function vShowList() {
   const ids = Object.keys(vPeers);
-  vInfo('[build g9] Room "' + decodeURIComponent(vRoom) + '", you=' + MYID.slice(0, 4) + ', ticks=' + vTicks + ', database sees ' + vSeen + (vErr ? '\nERROR: ' + vErr : '') + '\n' + (vMic ? 'Mic on' : 'Listen only (no mic)') + '. Connected: ' + (ids.length ? ids.map(i => (vNames[i] || i) + ' [' + vPeers[i].pc.connectionState + ']' + (vPeers[i].level ? ' hearing ' + '|'.repeat(Math.min(20, Math.round(vPeers[i].level() / 3))) : ' (no audio track yet)')).join(', ') : 'nobody else yet'));
+  vInfo('[build g10] Room "' + decodeURIComponent(vRoom) + '", you=' + MYID.slice(0, 4) + ', ticks=' + vTicks + ', database sees ' + vSeen + (vErr ? '\nERROR: ' + vErr : '') + '\n' + (vMic ? 'Mic on' : 'Listen only (no mic)') + '. Connected: ' + (ids.length ? ids.map(i => (vNames[i] || i) + ' [' + vPeers[i].pc.connectionState + ']' + (vPeers[i].level ? ' hearing ' + '|'.repeat(Math.min(20, Math.round(vPeers[i].level() / 3))) : ' (no audio track yet)')).join(', ') : 'nobody else yet'));
 }
 function waitIce(pc) { return new Promise(res => { if (pc.iceGatheringState === 'complete') return res(); const f = () => { if (pc.iceGatheringState === 'complete') { pc.removeEventListener('icegatheringstatechange', f); res(); } }; pc.addEventListener('icegatheringstatechange', f); setTimeout(res, 3500); }); }
 function opus(sdp) { return sdp.replace(/useinbandfec=1/g, 'useinbandfec=1;maxaveragebitrate=96000;stereo=0'); }
@@ -391,6 +394,21 @@ function voiceMute() {
   document.getElementById('vmute').textContent = t.enabled ? 'Mute me' : 'Unmute me';
 }
 addEventListener('pagehide', () => { if (vInVoice) fetch(vBase() + '/peers/' + MYID + '.json', { method: 'DELETE', keepalive: true }); });
+// ── one-tap join for singers: room + sound + voice ──
+const qRoom = new URLSearchParams(location.search).get('room'); if (qRoom) document.getElementById('room').value = qRoom;
+async function joinAll() {
+  const b = document.getElementById('join'), f = document.getElementById('friendly');
+  if (vInVoice) { voiceLeave(); b.textContent = 'Join and sing'; f.textContent = 'You left. Tap Join and sing to come back.'; return; }
+  b.disabled = true; f.textContent = 'Joining... allow the microphone if asked.';
+  try { if (!joined) await join(); await voiceJoin(); } catch (e) { f.textContent = 'Could not join: ' + e.message; b.disabled = false; return; }
+  b.disabled = false; b.textContent = vInVoice ? 'Leave' : 'Join and sing';
+}
+function friendlyLine() {
+  if (!vInVoice) return; const f = document.getElementById('friendly');
+  const names = Object.keys(vPeers).filter(i => vPeers[i].pc.connectionState === 'connected').map(i => vNames[i] || 'someone');
+  f.textContent = (vMic ? 'You are in. ' : 'You are in (no microphone: you can listen). ') + (names.length ? 'Singing with: ' + names.join(', ') : 'Waiting for others...');
+}
+setInterval(friendlyLine, 700);
 // ── admin ───────────────────────────────────────────────
 // The PIN is stored (hashed) in the room. This hides the controls and ignores non-admin writes in this page;
 // it is not tamper-proof against someone who edits the page themselves (that needs Firebase sign-in rules).
@@ -399,7 +417,8 @@ async function sha(s) { const b = await crypto.subtle.digest('SHA-256', new Text
 function setAdmin(v, msg) {
   isAdmin = v; document.body.classList.toggle('isadmin', v);
   document.getElementById('admininfo').textContent = msg;
-  if (v && vInVoice) { voiceLeave(); document.getElementById('admininfo').textContent += ' Voice was restarted so your MP3 can be sent: tap Join voice again.'; }
+  if (v && vInVoice) { voiceLeave(); setTimeout(voiceJoin, 400); document.getElementById('admininfo').textContent += ' Voice restarted so your MP3 can be sent.'; }
+  if (v) document.getElementById('admindet').open = false;
 }
 async function claimAdmin() {
   const pin = document.getElementById('pin').value.trim();
