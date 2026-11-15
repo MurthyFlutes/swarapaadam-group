@@ -64,6 +64,17 @@
 </div>
 
 <div class="card">
+  <h2>YouTube for everyone</h2>
+  <label>YouTube link (paste, then Load for everyone)</label>
+  <input id="yturl" placeholder="https://www.youtube.com/watch?v=...">
+  <div class="row" style="margin-top:8px"><button onclick="vLoad()">Load for everyone</button></div>
+  <div style="margin:8px 0;position:relative;width:100%;aspect-ratio:16/9;background:#000;border-radius:10px;overflow:hidden"><div id="ytplayer"></div></div>
+  <div class="row"><button onclick="vPlay()">Play for everyone</button><button class="alt" onclick="vPause()">Pause</button></div>
+  <div class="row" style="margin-top:8px"><button class="alt" onclick="vNudge(-10)">-10 s</button><button class="alt" onclick="vNudge(10)">+10 s</button><button class="alt" onclick="vNudge(-5)">-5 s</button></div>
+  <div class="mono" id="ytinfo" style="margin-top:6px">No video loaded. Join the room first.</div>
+</div>
+
+<div class="card">
   <h2>Accuracy check</h2>
   <div class="mono" id="acc">Start the room once; this shows how far the scheduled start was from the shared start.</div>
 </div>
@@ -155,7 +166,7 @@ async function join() {
   poll(); setInterval(poll, 400); setInterval(schedule, 50); setInterval(visual, 25);
 }
 function roomCode() { return encodeURIComponent(document.getElementById('room').value.trim() || 'default'); }
-async function post(obj) { await fetch(DB + '/rooms/' + roomCode() + '.json', { method: 'PUT', body: JSON.stringify(obj) }); }
+async function post(obj) { await fetch(DB + '/rooms/' + roomCode() + '/beat.json', { method: 'PUT', body: JSON.stringify(obj) }); }
 function leaderStart() {
   if (!synced) { alert('Join the room first (it syncs the clock).'); return; }
   const n = +document.getElementById('beats').value;
@@ -165,7 +176,9 @@ function leaderStop() { post({ seq: Date.now(), running: false, by: document.get
 
 async function poll() {
   if (!joined) return;
-  let r; try { r = await (await fetch(DB + '/rooms/' + roomCode() + '.json', { cache: 'no-store' })).json(); } catch (_) { return; }
+  let all; try { all = await (await fetch(DB + '/rooms/' + roomCode() + '.json', { cache: 'no-store' })).json(); } catch (_) { return; }
+  if (all && all.video) applyVideo(all.video);
+  const r = all && all.beat;
   if (!r || !r.seq || r.seq === lastSeq) return;
   lastSeq = r.seq; room = r; firstSoundDelta = null;
   if (!r.running) { stopDrone(); document.getElementById('roominfo').textContent = 'Stopped by ' + (r.by || '?'); document.getElementById('count').textContent = ''; return; }
@@ -202,6 +215,51 @@ setInterval(() => {
   if (!room.running || !firstSoundDelta) return;
   document.getElementById('acc').innerHTML = 'First click queued ' + firstSoundDelta.queuedAhead.toFixed(0) + ' ms ahead of its slot on this phone\'s audio clock.\nSlot = shared start ' + new Date(room.startAt).toISOString().slice(11, 23) + ' (server time).\nSound hardware delay on this phone: ' + (((ctx.outputLatency || 0) + (ctx.baseLatency || 0)) * 1000).toFixed(0) + ' ms, already subtracted.';
 }, 500);
+// ── synced YouTube ──────────────────────────────────────
+// Room stores {seq,id,playing,basePos,baseAt}: the video is at basePos seconds at server time baseAt, then runs in real time.
+let yt = null, ytReady = false, vid = null, vidLoadedId = null, lastVSeq = 0, lastFix = 0, ytMsg = '';
+const tag = document.createElement('script'); tag.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(tag);
+window.onYouTubeIframeAPIReady = () => {
+  yt = new YT.Player('ytplayer', { width: '100%', height: '100%', playerVars: { playsinline: 1, rel: 0 }, events: { onReady: () => { ytReady = true; if (vid) applyVideo(vid, true); } } });
+};
+function ytId(s) {
+  s = (s || '').trim(); const m = s.match(/(?:v=|youtu\.be\/|shorts\/|embed\/|live\/)([A-Za-z0-9_-]{11})/) || s.match(/^([A-Za-z0-9_-]{11})$/);
+  return m ? m[1] : null;
+}
+function vPos() { if (!vid) return 0; return vid.playing ? vid.basePos + Math.max(0, (serverNow() - vid.baseAt) / 1000) : vid.basePos; }
+async function putVideo(o) { o.seq = Date.now(); await fetch(DB + '/rooms/' + roomCode() + '/video.json', { method: 'PUT', body: JSON.stringify(o) }); poll(); }
+function needJoin() { if (!joined) { alert('Tap Join room first.'); return true; } return false; }
+function vLoad() { if (needJoin()) return; const id = ytId(document.getElementById('yturl').value); if (!id) { alert('Could not find a YouTube video link.'); return; } putVideo({ id, playing: false, basePos: 0, baseAt: 0 }); }
+function vPlay() { if (needJoin() || !vid) return; putVideo({ id: vid.id, playing: true, basePos: vPos(), baseAt: serverNow() + 2000 }); }
+function vPause() { if (needJoin() || !vid) return; putVideo({ id: vid.id, playing: false, basePos: vPos(), baseAt: 0 }); }
+function vNudge(d) { if (needJoin() || !vid) return; const p = Math.max(0, vPos() + d); putVideo({ id: vid.id, playing: vid.playing, basePos: p, baseAt: vid.playing ? serverNow() + 1500 : 0 }); }
+function applyVideo(v, force) {
+  if (!force && v.seq === lastVSeq) return;
+  lastVSeq = v.seq; vid = v;
+  if (ytReady && vidLoadedId !== v.id) { vidLoadedId = v.id; yt.cueVideoById(v.id, v.basePos || 0); }
+}
+setInterval(() => {   // every 150 ms: bring this phone's player to where the room says it should be
+  if (!ytReady || !vid || vidLoadedId !== vid.id || !yt.getPlayerState) return;
+  const st = yt.getPlayerState(), cur = yt.getCurrentTime ? yt.getCurrentTime() : 0, now = serverNow();
+  const info = document.getElementById('ytinfo');
+  if (vid.playing) {
+    const wait = vid.baseAt - now;
+    if (wait > 0) {                          // countdown: hold at the start position, then go together
+      if (st === 1) yt.pauseVideo();
+      if (Math.abs(cur - vid.basePos) > 0.5 || st === 5 || st === -1) yt.seekTo(vid.basePos, true);
+      info.textContent = 'Starting in ' + (wait / 1000).toFixed(1) + ' s...'; return;
+    }
+    const want = vPos();
+    if (st !== 1 && st !== 3) { yt.seekTo(want, true); yt.playVideo(); ytMsg = 'Starting (if nothing plays, tap the video once)'; }
+    else if (st === 1 && Math.abs(cur - want) > 0.35 && now - lastFix > 3000) { yt.seekTo(want, true); lastFix = now; ytMsg = 'Corrected drift ' + (cur - want).toFixed(2) + ' s'; }
+    else if (st === 1) ytMsg = 'Playing in step. Drift ' + ((cur - want) * 1000).toFixed(0) + ' ms';
+    info.textContent = ytMsg + ' (position ' + want.toFixed(1) + ' s)';
+  } else {
+    if (st === 1 || st === 3) yt.pauseVideo();
+    if (Math.abs(cur - vid.basePos) > 0.5) yt.seekTo(vid.basePos, true);
+    info.textContent = 'Paused at ' + vid.basePos.toFixed(1) + ' s';
+  }
+}, 150);
 setInterval(drawClock, 25); syncClock();
 window.__t = { serverNow, localNow, get offset() { return offset; }, syncClock };
 </script>
