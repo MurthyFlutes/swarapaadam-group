@@ -302,7 +302,7 @@ let vMic = null, micSrc = null;
 function vInfo(t) { document.getElementById('voiceinfo').textContent = t; }
 function vShowList() {
   const ids = Object.keys(vPeers);
-  vInfo((vMic ? 'Mic on' : 'Listen only (no mic)') + '. Connected: ' + (ids.length ? ids.map(i => (vNames[i] || i) + ' [' + vPeers[i].pc.connectionState + ']').join(', ') : 'nobody else yet'));
+  vInfo((vMic ? 'Mic on' : 'Listen only (no mic)') + '. Connected: ' + (ids.length ? ids.map(i => (vNames[i] || i) + ' [' + vPeers[i].pc.connectionState + ']' + (vPeers[i].level ? ' hearing ' + '|'.repeat(Math.min(20, Math.round(vPeers[i].level() / 3))) : ' (no audio track yet)')).join(', ') : 'nobody else yet'));
 }
 function waitIce(pc) { return new Promise(res => { if (pc.iceGatheringState === 'complete') return res(); const f = () => { if (pc.iceGatheringState === 'complete') { pc.removeEventListener('icegatheringstatechange', f); res(); } }; pc.addEventListener('icegatheringstatechange', f); setTimeout(res, 3500); }); }
 function opus(sdp) { return sdp.replace(/useinbandfec=1/g, 'useinbandfec=1;maxaveragebitrate=96000;stereo=0'); }
@@ -310,7 +310,8 @@ function vNewPc(id) {
   if (vPeers[id]) { try { vPeers[id].pc.close(); } catch (_) {} const old = document.getElementById('au_' + id); if (old) old.remove(); }
   const pc = new RTCPeerConnection(ICE); vPeers[id] = { pc };
   if (vStream) vStream.getTracks().forEach(t => pc.addTrack(t, vStream)); else pc.addTransceiver('audio', { direction: 'recvonly' });
-  pc.ontrack = e => { vPeers[id].stream = e.streams[0]; if (rec) recAddPeer(id, e.streams[0]); let a = document.getElementById('au_' + id); if (!a) { a = document.createElement('audio'); a.id = 'au_' + id; a.autoplay = true; a.playsInline = true; document.getElementById('voiceaudio').appendChild(a); } a.srcObject = e.streams[0]; a.play().catch(() => {}); };
+  pc.ontrack = e => { vPeers[id].stream = e.streams[0];
+    try { if (ctx) { const an = ctx.createAnalyser(), d = new Uint8Array(an.fftSize); ctx.createMediaStreamSource(e.streams[0]).connect(an); vPeers[id].level = () => { an.getByteTimeDomainData(d); let m = 0; d.forEach(x => m = Math.max(m, Math.abs(x - 128))); return m; }; } } catch (_) {} if (rec) recAddPeer(id, e.streams[0]); let a = document.getElementById('au_' + id); if (!a) { a = document.createElement('audio'); a.id = 'au_' + id; a.autoplay = true; a.playsInline = true; document.getElementById('voiceaudio').appendChild(a); } a.srcObject = e.streams[0]; a.play().catch(() => {}); };
   pc.onconnectionstatechange = vShowList;
   return pc;
 }
@@ -460,6 +461,7 @@ async function recStop() {
   document.getElementById('recbtn').textContent = 'Record everyone';
   document.getElementById('recinfo').textContent = 'Saved ' + all.length + ' file(s) to Downloads (allow multiple downloads if the browser asks).';
 }
+setInterval(() => { if (vInVoice) vShowList(); }, 400);   // live level meter next to each person
 setInterval(drawClock, 25); syncClock();
 window.__t = { serverNow, localNow, get offset() { return offset; }, syncClock };
 </script>
