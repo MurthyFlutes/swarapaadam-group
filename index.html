@@ -302,7 +302,7 @@ let vMic = null, micSrc = null;
 function vInfo(t) { document.getElementById('voiceinfo').textContent = t; }
 function vShowList() {
   const ids = Object.keys(vPeers);
-  vInfo('[build g8] Room "' + decodeURIComponent(vRoom) + '", you=' + MYID.slice(0, 4) + ', ticks=' + vTicks + ', database sees ' + vSeen + (vErr ? '\nERROR: ' + vErr : '') + '\n' + (vMic ? 'Mic on' : 'Listen only (no mic)') + '. Connected: ' + (ids.length ? ids.map(i => (vNames[i] || i) + ' [' + vPeers[i].pc.connectionState + ']' + (vPeers[i].level ? ' hearing ' + '|'.repeat(Math.min(20, Math.round(vPeers[i].level() / 3))) : ' (no audio track yet)')).join(', ') : 'nobody else yet'));
+  vInfo('[build g9] Room "' + decodeURIComponent(vRoom) + '", you=' + MYID.slice(0, 4) + ', ticks=' + vTicks + ', database sees ' + vSeen + (vErr ? '\nERROR: ' + vErr : '') + '\n' + (vMic ? 'Mic on' : 'Listen only (no mic)') + '. Connected: ' + (ids.length ? ids.map(i => (vNames[i] || i) + ' [' + vPeers[i].pc.connectionState + ']' + (vPeers[i].level ? ' hearing ' + '|'.repeat(Math.min(20, Math.round(vPeers[i].level() / 3))) : ' (no audio track yet)')).join(', ') : 'nobody else yet'));
 }
 function waitIce(pc) { return new Promise(res => { if (pc.iceGatheringState === 'complete') return res(); const f = () => { if (pc.iceGatheringState === 'complete') { pc.removeEventListener('icegatheringstatechange', f); res(); } }; pc.addEventListener('icegatheringstatechange', f); setTimeout(res, 3500); }); }
 function opus(sdp) { return sdp.replace(/useinbandfec=1/g, 'useinbandfec=1;maxaveragebitrate=96000;stereo=0'); }
@@ -364,7 +364,10 @@ async function voiceJoin() {
   if (!joined) { alert('Tap Join room first.'); return; }
   vRoom = roomCode(); const music = document.getElementById('music').checked;
   let mic = null;
-  try { mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: !music, noiseSuppression: !music, autoGainControl: !music, channelCount: 1 } }); }
+  vInfo('Asking for the microphone... click Allow in the browser prompt (waiting up to 8 s).');
+  try {
+    mic = await Promise.race([navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: !music, noiseSuppression: !music, autoGainControl: !music, channelCount: 1 } }), new Promise((_, rej) => setTimeout(() => rej({ name: 'NoAnswer' }), 8000))]);
+  }
   catch (e) { vInfo('Microphone not allowed (' + e.name + '): you will hear others but they will not hear you.'); }
   vMic = mic;
   if (isAdmin) {   // the admin's outgoing stream = mic + MP3 mixed, so everyone hears the MP3 without any extra connection
