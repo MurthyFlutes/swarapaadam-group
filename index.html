@@ -23,10 +23,11 @@
   .beat.one { border-color:#B07A1A; }
   .mono { font-family: ui-monospace, Consolas, monospace; font-size:.85em; line-height:1.5; white-space:pre-wrap; }
   body:not(.isadmin) .adm { display:none; }
-  .dev, #ytcard { display:none !important; }
+  .dev { display:none !important; }
+  #ytcard { display:none; } body.isadmin #ytcard, #ytcard.show { display:block; }
   .ok { color:var(--g); font-weight:700; } .warn { color:#C0392B; font-weight:700; }
 </style></head><body>
-<header>SwaraPaadam &middot; Group Practice <span style="font-size:.55em;font-weight:400;opacity:.8">v20</span></header>
+<header>SwaraPaadam &middot; Group Practice <span style="font-size:.55em;font-weight:400;opacity:.8">v21</span></header>
 <main>
 
 <div class="card dev">
@@ -62,7 +63,7 @@
   <div class="mono" id="modeinfo" style="margin-top:6px">Practice: nobody's microphone is on. Everyone hears the song and sings on their own. No echo.</div>
 </div>
 
-<div class="card adm">
+<div class="card dev">
   <h2>MP3 from this computer (admin)</h2>
   <input type="file" id="mp3file">
   <div class="row" style="margin-top:8px"><button onclick="mp3Play()">Play</button><button class="alt" onclick="mp3Pause()">Pause</button><button class="alt" onclick="mp3Stop()">Stop</button></div>
@@ -219,7 +220,7 @@ function leaderStop() { post({ seq: Date.now(), running: false, by: document.get
 async function poll() {
   if (!joined) return;
   let all; try { all = await (await fetch(DB + '/rooms/' + roomCode() + '.json', { cache: 'no-store' })).json(); } catch (_) { return; }
-  /* YouTube off: video state in the room is ignored */
+  if (all && all.video) applyVideo(all.video);
   if (all && all.mp3) mOnCmd(all.mp3);
   if (!isAdmin) applyMode(all && all.mode);      // the admin is the source of the mode, singers follow it
   const r = all && all.beat;
@@ -262,7 +263,7 @@ setInterval(() => {
 // ── synced YouTube ──────────────────────────────────────
 // Room stores {seq,id,playing,basePos,baseAt}: the video is at basePos seconds at server time baseAt, then runs in real time.
 let yt = null, ytReady = false, vid = null, vidLoadedId = null, lastVSeq = 0, lastFix = 0, ytMsg = '';
-const YT_ON = false;   // YouTube is switched off for now (MP3 only)
+const YT_ON = true;
 if (YT_ON) { const tag = document.createElement('script'); tag.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(tag); }
 window.onYouTubeIframeAPIReady = () => {
   yt = new YT.Player('ytplayer', { width: '100%', height: '100%', playerVars: { playsinline: 1, rel: 0 }, events: { onReady: () => { ytReady = true; if (vid) applyVideo(vid, true); } } });
@@ -425,6 +426,7 @@ async function joinAll() {
   const b = document.getElementById('join'), f = document.getElementById('friendly');
   if (vInVoice) {   // Leave = full stop: close everything, then reload the page so no sound can possibly remain
     if (isAdmin && mFile) fetch(DB + '/rooms/' + roomCode() + '/mp3.json', { method: 'PUT', keepalive: true, body: JSON.stringify({ fid: mFile.fid, playing: false, basePos: 0, baseAt: 0, seq: Date.now() }) });   // stop everyone's copy
+    if (isAdmin && vid) fetch(DB + '/rooms/' + roomCode() + '/video.json', { method: 'PUT', keepalive: true, body: JSON.stringify({ id: vid.id, playing: false, basePos: 0, baseAt: 0, seq: Date.now() }) });   // stop everyone's video
     voiceLeave(); b.disabled = true; f.textContent = 'You left.';
     setTimeout(() => { location.href = location.pathname + '?room=' + roomCode() + (ADMIN_LINK ? '&admin=1' : ''); }, 600); return;
   }
