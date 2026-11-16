@@ -26,7 +26,7 @@
   .dev, #ytcard { display:none !important; }
   .ok { color:var(--g); font-weight:700; } .warn { color:#C0392B; font-weight:700; }
 </style></head><body>
-<header>SwaraPaadam &middot; Group Practice <span style="font-size:.55em;font-weight:400;opacity:.8">v19</span></header>
+<header>SwaraPaadam &middot; Group Practice <span style="font-size:.55em;font-weight:400;opacity:.8">v20</span></header>
 <main>
 
 <div class="card dev">
@@ -57,6 +57,12 @@
 </details>
 
 <div class="card adm">
+  <h2>Microphones (admin)</h2>
+  <div class="row"><button id="modePractice" onclick="setMode('practice')">Practice: mics off</button><button id="modeGroup" class="alt" onclick="setMode('group')">Group: mics on</button></div>
+  <div class="mono" id="modeinfo" style="margin-top:6px">Practice: nobody's microphone is on. Everyone hears the song and sings on their own. No echo.</div>
+</div>
+
+<div class="card adm">
   <h2>MP3 from this computer (admin)</h2>
   <input type="file" id="mp3file">
   <div class="row" style="margin-top:8px"><button onclick="mp3Play()">Play</button><button class="alt" onclick="mp3Pause()">Pause</button><button class="alt" onclick="mp3Stop()">Stop</button></div>
@@ -65,7 +71,7 @@
   <div class="mono" id="mp3info" style="margin-top:6px">Pick a file. It is sent to everyone through your voice stream, so join voice first (earphones on).</div>
 </div>
 
-<div class="card adm">
+<div class="card adm" id="reccard" style="display:none">
   <h2>Recording (admin)</h2>
   <div class="row"><button onclick="recStart()" id="recbtn">Record everyone</button><button class="alt" onclick="recStop()">Stop &amp; save</button></div>
   <div class="mono" id="recinfo" style="margin-top:6px">Records one mixed file: your MP3 + your voice + all singers. Saved to this computer's Downloads.</div>
@@ -215,6 +221,7 @@ async function poll() {
   let all; try { all = await (await fetch(DB + '/rooms/' + roomCode() + '.json', { cache: 'no-store' })).json(); } catch (_) { return; }
   /* YouTube off: video state in the room is ignored */
   if (all && all.mp3) mOnCmd(all.mp3);
+  if (!isAdmin) applyMode(all && all.mode);      // the admin is the source of the mode, singers follow it
   const r = all && all.beat;
   if (!r || !r.seq || r.seq === lastSeq) return;
   lastSeq = r.seq; room = r; firstSoundDelta = null;
@@ -384,8 +391,8 @@ async function voiceJoin() {
   if (!joined) { alert('Tap Join room first.'); return; }
   vRoom = roomCode(); const music = document.getElementById('music').checked;
   let mic = null;
-  vInfo('Asking for the microphone... click Allow in the browser prompt (waiting up to 8 s).');
-  try {
+  if (roomMode === 'group') vInfo('Asking for the microphone... click Allow in the browser prompt (waiting up to 8 s).');
+  if (roomMode === 'group') try {   // Practice mode (default): nobody's microphone is used, so there is no echo
     mic = await Promise.race([navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: !music, noiseSuppression: !music, autoGainControl: !music, channelCount: 1 } }), new Promise((_, rej) => setTimeout(() => rej({ name: 'NoAnswer' }), 8000))]);
   }
   catch (e) { vInfo('Microphone not allowed (' + e.name + '): you will hear others but they will not hear you.'); }
@@ -422,15 +429,32 @@ async function joinAll() {
     setTimeout(() => { location.href = location.pathname + '?room=' + roomCode() + (ADMIN_LINK ? '&admin=1' : ''); }, 600); return;
   }
   b.disabled = true; f.textContent = 'Joining... allow the microphone if asked.';
-  try { if (!joined) await join(); await voiceJoin(); } catch (e) { f.textContent = 'Could not join: ' + e.message; b.disabled = false; return; }
+  try { await loadMode(); if (!joined) await join(); await voiceJoin(); } catch (e) { f.textContent = 'Could not join: ' + e.message; b.disabled = false; return; }
   b.disabled = false; b.textContent = vInVoice ? 'Leave' : 'Join and sing';
 }
 function friendlyLine() {
   if (!vInVoice) return; const f = document.getElementById('friendly');
   const names = Object.keys(vPeers).filter(i => vPeers[i].pc.connectionState === 'connected').map(i => vNames[i] || 'someone');
-  f.textContent = (vMic ? 'You are in. ' : 'You are in (no microphone: you can listen). ') + (names.length ? 'Singing with: ' + names.join(', ') : 'Waiting for others...') + (!isAdmin && mStatus ? '\n' + mStatus : '');
+  f.textContent = (vMic ? 'You are in. Your microphone is ON. ' : 'You are in. Your microphone is off: just listen and sing on your own. ') + (names.length ? 'Singing with: ' + names.join(', ') : 'Waiting for others...') + (!isAdmin && mStatus ? '\n' + mStatus : '');
 }
 setInterval(friendlyLine, 700);
+// ── microphone mode: 'practice' (default, everyone's mic off, no echo) or 'group' (mics on, recording possible) ──
+let roomMode = 'practice';
+function modeUi() {
+  document.getElementById('modePractice').className = roomMode === 'practice' ? '' : 'alt';
+  document.getElementById('modeGroup').className = roomMode === 'group' ? '' : 'alt';
+  document.getElementById('modeinfo').textContent = roomMode === 'group'
+    ? "Group: microphones are ON for everyone (earphones needed or there will be echo). Recording is available."
+    : "Practice: nobody's microphone is on. Everyone hears the song and sings on their own. No echo, no recording.";
+  const rc = document.getElementById('reccard'); if (rc) rc.style.display = roomMode === 'group' ? '' : 'none';
+}
+function applyMode(m) {     // runs on every device when the room's mode changes
+  m = m === 'group' ? 'group' : 'practice'; if (m === roomMode) return;
+  roomMode = m; modeUi();
+  if (vInVoice) { voiceLeave(); setTimeout(voiceJoin, 600); }     // re-join so the microphone is switched on or off
+}
+function setMode(m) { if (!isAdmin) return; fetch(DB + '/rooms/' + roomCode() + '/mode.json', { method: 'PUT', body: JSON.stringify(m) }); applyMode(m); }
+async function loadMode() { try { const m = await (await fetch(DB + '/rooms/' + roomCode() + '/mode.json', { cache: 'no-store' })).json(); roomMode = m === 'group' ? 'group' : 'practice'; modeUi(); } catch (_) {} }
 // ── admin ───────────────────────────────────────────────
 // The admin login is only shown when the link ends with &admin=1; singers never see it.
 const ADMIN_LINK = new URLSearchParams(location.search).get('admin') === '1';
@@ -562,6 +586,7 @@ function recAddPeer(id, stream) {
 function recorder(stream) { const chunks = [], r = new MediaRecorder(stream); r.ondataavailable = e => e.data.size && chunks.push(e.data); r.start(1000); return { r, chunks }; }
 function recStart() {
   if (!isAdmin || rec) return; if (!ctx) { alert('Tap Join room first.'); return; }
+  if (roomMode !== 'group') { alert('Microphones are off (Practice mode), so only the song would be recorded. Switch to Group mode first.'); return; }
   ensureAdminGraph();
   const mix = ctx.createMediaStreamDestination(); mp3Gain.connect(mix); if (micSrc) micSrc.connect(mix);
   rec = { mix, mixSrcs: [], tracks: {}, t0: Date.now(), room: decodeURIComponent(roomCode()) };
