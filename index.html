@@ -26,7 +26,7 @@
   .dev, #ytcard { display:none !important; }
   .ok { color:var(--g); font-weight:700; } .warn { color:#C0392B; font-weight:700; }
 </style></head><body>
-<header>SwaraPaadam &middot; Group Practice <span style="font-size:.55em;font-weight:400;opacity:.8">v18</span></header>
+<header>SwaraPaadam &middot; Group Practice <span style="font-size:.55em;font-weight:400;opacity:.8">v19</span></header>
 <main>
 
 <div class="card dev">
@@ -214,6 +214,7 @@ async function poll() {
   if (!joined) return;
   let all; try { all = await (await fetch(DB + '/rooms/' + roomCode() + '.json', { cache: 'no-store' })).json(); } catch (_) { return; }
   /* YouTube off: video state in the room is ignored */
+  if (all && all.mp3) mOnCmd(all.mp3);
   const r = all && all.beat;
   if (!r || !r.seq || r.seq === lastSeq) return;
   lastSeq = r.seq; room = r; firstSoundDelta = null;
@@ -310,9 +311,11 @@ function vShowList() {
 }
 function waitIce(pc) { return new Promise(res => { if (pc.iceGatheringState === 'complete') return res(); const f = () => { if (pc.iceGatheringState === 'complete') { pc.removeEventListener('icegatheringstatechange', f); res(); } }; pc.addEventListener('icegatheringstatechange', f); setTimeout(res, 3500); }); }
 function opus(sdp) { return sdp.replace(/useinbandfec=1/g, 'useinbandfec=1;maxaveragebitrate=96000;stereo=0'); }
-function vNewPc(id) {
+function vNewPc(id, initiator) {
   if (vPeers[id]) { try { vPeers[id].pc.close(); } catch (_) {} const old = document.getElementById('au_' + id); if (old) old.remove(); }
   const pc = new RTCPeerConnection(ICE); vPeers[id] = { pc };
+  // data channel: carries the admin's MP3 file to each phone (the caller creates it, the other side receives it)
+  if (initiator) dcSetup(id, pc.createDataChannel('mp3')); else pc.ondatachannel = e => dcSetup(id, e.channel);
   if (vStream) vStream.getTracks().forEach(t => pc.addTrack(t, vStream)); else pc.addTransceiver('audio', { direction: 'recvonly' });
   pc.ontrack = e => { vPeers[id].stream = e.streams[0];
     try { if (ctx) { const an = ctx.createAnalyser(), d = new Uint8Array(an.fftSize); ctx.createMediaStreamSource(e.streams[0]).connect(an); vPeers[id].level = () => { an.getByteTimeDomainData(d); let m = 0; d.forEach(x => m = Math.max(m, Math.abs(x - 128))); return m; }; } } catch (_) {} if (rec) recAddPeer(id, e.streams[0]); let a = document.getElementById('au_' + id); if (!a) { a = document.createElement('audio'); a.id = 'au_' + id; a.autoplay = true; a.playsInline = true; document.getElementById('voiceaudio').appendChild(a); } a.srcObject = e.streams[0]; a.play().catch(() => {}); };
@@ -321,13 +324,13 @@ function vNewPc(id) {
 }
 async function vSend(to, msg) { msg.t = Date.now(); await fetch(vBase() + '/sig/' + to + '/' + MYID + '.json', { method: 'PUT', body: JSON.stringify(msg) }); }
 async function vCall(id) {   // I am the caller for peers with a smaller id
-  const pc = vNewPc(id); const o = await pc.createOffer(); await pc.setLocalDescription({ type: 'offer', sdp: opus(o.sdp) });
+  const pc = vNewPc(id, true); const o = await pc.createOffer(); await pc.setLocalDescription({ type: 'offer', sdp: opus(o.sdp) });
   await waitIce(pc); await vSend(id, { type: 'offer', sdp: pc.localDescription.sdp });
 }
 async function vHandle(from, m) {
   if (!vInVoice) return;
   if (m.type === 'offer') {
-    const pc = vNewPc(from); await pc.setRemoteDescription({ type: 'offer', sdp: m.sdp });
+    const pc = vNewPc(from, false); await pc.setRemoteDescription({ type: 'offer', sdp: m.sdp });
     const a = await pc.createAnswer(); await pc.setLocalDescription({ type: 'answer', sdp: opus(a.sdp) });
     await waitIce(pc); await vSend(from, { type: 'answer', sdp: pc.localDescription.sdp });
   } else if (m.type === 'answer' && vPeers[from] && vPeers[from].pc.signalingState === 'have-local-offer') {
@@ -414,6 +417,7 @@ const qRoom = new URLSearchParams(location.search).get('room'); if (qRoom) docum
 async function joinAll() {
   const b = document.getElementById('join'), f = document.getElementById('friendly');
   if (vInVoice) {   // Leave = full stop: close everything, then reload the page so no sound can possibly remain
+    if (isAdmin && mFile) fetch(DB + '/rooms/' + roomCode() + '/mp3.json', { method: 'PUT', keepalive: true, body: JSON.stringify({ fid: mFile.fid, playing: false, basePos: 0, baseAt: 0, seq: Date.now() }) });   // stop everyone's copy
     voiceLeave(); b.disabled = true; f.textContent = 'You left.';
     setTimeout(() => { location.href = location.pathname + '?room=' + roomCode() + (ADMIN_LINK ? '&admin=1' : ''); }, 600); return;
   }
@@ -424,7 +428,7 @@ async function joinAll() {
 function friendlyLine() {
   if (!vInVoice) return; const f = document.getElementById('friendly');
   const names = Object.keys(vPeers).filter(i => vPeers[i].pc.connectionState === 'connected').map(i => vNames[i] || 'someone');
-  f.textContent = (vMic ? 'You are in. ' : 'You are in (no microphone: you can listen). ') + (names.length ? 'Singing with: ' + names.join(', ') : 'Waiting for others...');
+  f.textContent = (vMic ? 'You are in. ' : 'You are in (no microphone: you can listen). ') + (names.length ? 'Singing with: ' + names.join(', ') : 'Waiting for others...') + (!isAdmin && mStatus ? '\n' + mStatus : '');
 }
 setInterval(friendlyLine, 700);
 // ── admin ───────────────────────────────────────────────
@@ -451,29 +455,102 @@ async function claimAdmin() {
   else setAdmin(false, 'Wrong PIN: this room already has an admin.');
 }
 
-// ── admin MP3 (played here, mixed into the admin voice stream) ──
-let adminDest = null, mp3Gain = null, mp3El = null;
+// ── MP3: the admin sends the file to every phone; each device plays its OWN copy at the same shared moment ──
+let adminDest = null, mp3Gain = null;
 function ensureAdminGraph() {
   if (adminDest) return;
-  adminDest = ctx.createMediaStreamDestination(); mp3Gain = ctx.createGain(); mp3Gain.gain.value = +document.getElementById('mp3vol').value;
-  mp3Gain.connect(adminDest); mp3Gain.connect(ctx.destination);
+  adminDest = ctx.createMediaStreamDestination();      // carries only the admin's microphone to the singers
+  mp3Gain = ctx.createGain(); mp3Gain.gain.value = +document.getElementById('mp3vol').value; mp3Gain.connect(ctx.destination);
 }
-document.getElementById('mp3file').addEventListener('change', e => {
+let mFile = null;      // admin only: { fid, name, ab (file bytes), buffer }
+let mBuf = null;       // everyone: { fid, name, buffer }  the decoded copy that is ready to play
+let mCmd = null, mLastSeq = 0, mSrc = null, mRecv = null, mStatus = '';
+function mInfo(t) { document.getElementById('mp3info').textContent = t; }
+function mPos() {      // where the song is right now, in seconds
+  if (!mCmd) return 0; const dur = mBuf ? mBuf.buffer.duration : 1e9;
+  return Math.min(mCmd.playing ? mCmd.basePos + Math.max(0, (serverNow() - mCmd.baseAt) / 1000) : mCmd.basePos, dur);
+}
+function mStopSrc() { if (mSrc) { try { mSrc.onended = null; mSrc.stop(); } catch (_) {} try { mSrc.disconnect(); } catch (_) {} mSrc = null; } }
+function mApply() {    // line this device up with the room's MP3 command
+  mStopSrc(); const c = mCmd; if (!c || !c.playing) return;
+  if (!mBuf || mBuf.fid !== c.fid) return;                  // file not here yet: mApply runs again when it arrives
+  ctx.resume();
+  const late = (serverNow() - c.baseAt) / 1000;             // > 0 means the shared start moment already passed
+  const off = c.basePos + Math.max(0, late); if (off >= mBuf.buffer.duration) return;
+  const src = ctx.createBufferSource(); src.buffer = mBuf.buffer; src.connect(isAdmin ? mp3Gain : ctx.destination);
+  src.start(late < 0 ? Math.max(toAudioTime(c.baseAt), ctx.currentTime) : ctx.currentTime, off);
+  src.onended = () => { if (mSrc === src) mSrc = null; };
+  mSrc = src;
+}
+function mOnCmd(c) { if (isAdmin || c.seq === mLastSeq) return; mLastSeq = c.seq; mCmd = c; mApply(); }
+function putM(o) {     // admin: apply here at once, tell everyone else through the room
+  if (!isAdmin || !mFile) return; o.fid = mFile.fid; o.seq = Date.now(); mCmd = o; mLastSeq = o.seq; mApply();
+  fetch(DB + '/rooms/' + roomCode() + '/mp3.json', { method: 'PUT', body: JSON.stringify(o) });
+}
+// file transfer over the WebRTC data channel (16 KB pieces)
+function dcSetup(id, dc) {
+  dc.binaryType = 'arraybuffer'; vPeers[id].dc = dc;
+  dc.onopen = () => {
+    if (!isAdmin && mBuf) dc.send(JSON.stringify({ t: 'ready', fid: mBuf.fid }));            // reconnecting singer already has the file
+    if (isAdmin && mFile) setTimeout(() => { const p = vPeers[id]; if (p && p.readyFid !== mFile.fid) mSend(id); }, 800);
+  };
+  dc.onmessage = e => mOnData(id, e.data);
+}
+async function mSend(id) {
+  const p = vPeers[id]; if (!p || !p.dc || p.dc.readyState !== 'open' || !mFile || p.sentFid === mFile.fid) return;
+  p.sentFid = mFile.fid; const dc = p.dc, ab = mFile.ab, N = 16384;
+  dc.send(JSON.stringify({ t: 'file', fid: mFile.fid, name: mFile.name, size: ab.byteLength }));
+  dc.bufferedAmountLowThreshold = 1 << 20;
+  for (let o = 0; o < ab.byteLength; o += N) {
+    if (dc.readyState !== 'open') { p.sentFid = null; return; }
+    if (dc.bufferedAmount > (4 << 20)) await new Promise(res => { dc.onbufferedamountlow = () => { dc.onbufferedamountlow = null; res(); }; });
+    dc.send(ab.slice(o, o + N));
+  }
+  dc.send(JSON.stringify({ t: 'end', fid: mFile.fid }));
+}
+function mOnData(id, d) {
+  if (typeof d === 'string') {
+    const m = JSON.parse(d);
+    if (m.t === 'file') { mRecv = { fid: m.fid, name: m.name, size: m.size, parts: [], got: 0 }; mStatus = 'Getting the music... 0%'; }
+    else if (m.t === 'end' && mRecv && mRecv.fid === m.fid) { const r = mRecv; mRecv = null; mDecode(id, r); }
+    else if (m.t === 'ready' && vPeers[id]) vPeers[id].readyFid = m.fid;
+    return;
+  }
+  if (!mRecv) return; mRecv.parts.push(d); mRecv.got += d.byteLength; mStatus = 'Getting the music... ' + Math.round(100 * mRecv.got / mRecv.size) + '%';
+}
+async function mDecode(id, r) {
+  try {
+    mStatus = 'Preparing the music...';
+    const buffer = await ctx.decodeAudioData(await new Blob(r.parts).arrayBuffer());
+    mBuf = { fid: r.fid, name: r.name, buffer }; mStatus = 'Music ready.';
+    const p = vPeers[id]; if (p && p.dc && p.dc.readyState === 'open') p.dc.send(JSON.stringify({ t: 'ready', fid: r.fid }));
+    mApply();
+  } catch (e) { mStatus = 'Could not read the music file (' + e.message + ').'; }
+}
+document.getElementById('mp3file').addEventListener('change', async e => {
   const f = e.target.files[0]; if (!f) return;
   if (!/\.(mp3|m4a|wav|ogg|aac|flac|opus|wma)$/i.test(f.name) && !(f.type || '').startsWith('audio/')) { alert('Please choose an audio file (mp3, m4a, wav...).'); e.target.value = ''; return; }
-  if (!ctx) { alert('Tap Join room first.'); return; }
-  ensureAdminGraph(); if (mp3El) { mp3El.pause(); URL.revokeObjectURL(mp3El.src); }
-  mp3El = new Audio(URL.createObjectURL(f)); mp3El.crossOrigin = 'anonymous';
-  ctx.createMediaElementSource(mp3El).connect(mp3Gain);
-  mp3El.onended = () => mp3Info('Finished.');
-  mp3Info('Loaded: ' + f.name + (vInVoice ? '' : '  (join voice so everyone hears it)'));
+  if (!ctx) { alert('Tap Join and sing first.'); return; }
+  if (f.size > 30 * 1024 * 1024) { alert('That file is over 30 MB. Please use a smaller one (a normal mp3 song is 3-10 MB).'); return; }
+  ensureAdminGraph(); mInfo('Reading the file...');
+  try {
+    const ab = await f.arrayBuffer(), buffer = await ctx.decodeAudioData(ab.slice(0));
+    mFile = { fid: Math.random().toString(36).slice(2, 10), name: f.name, ab, buffer }; mBuf = { fid: mFile.fid, name: f.name, buffer };
+    putM({ playing: false, basePos: 0, baseAt: 0 });
+    Object.keys(vPeers).forEach(mSend);
+  } catch (err) { mInfo('Could not read that file: ' + err.message); }
 });
-function mp3Info(t) { document.getElementById('mp3info').textContent = t; }
-function mp3Play() { if (!mp3El) { alert('Pick an MP3 first.'); return; } ctx.resume(); mp3El.play(); mp3Info('Playing for everyone' + (vInVoice ? '' : ' (not in voice: only you hear it)')); }
-function mp3Pause() { if (mp3El) { mp3El.pause(); mp3Info('Paused at ' + mp3El.currentTime.toFixed(1) + ' s'); } }
-function mp3Stop() { if (mp3El) { mp3El.pause(); mp3El.currentTime = 0; mp3Info('Stopped.'); } }
-function mp3Skip(d) { if (mp3El) mp3El.currentTime = Math.max(0, mp3El.currentTime + d); }
+function mp3Play() { if (!mFile) { alert('Pick an MP3 first.'); return; } putM({ playing: true, basePos: mPos(), baseAt: serverNow() + 2000 }); }
+function mp3Pause() { if (mFile) putM({ playing: false, basePos: mPos() }); }
+function mp3Stop() { if (mFile) putM({ playing: false, basePos: 0 }); }
+function mp3Skip(d) { if (!mFile) return; const p = Math.max(0, Math.min(mFile.buffer.duration - 0.5, mPos() + d)); putM({ playing: !!(mCmd && mCmd.playing), basePos: p, baseAt: serverNow() + 1500 }); }
 function mp3Vol() { if (mp3Gain) mp3Gain.gain.value = +document.getElementById('mp3vol').value; }
+setInterval(() => {    // admin status line: who has the file, and where the song is
+  if (!isAdmin || !mFile) return;
+  const ids = Object.keys(vPeers), ready = ids.filter(i => vPeers[i].readyFid === mFile.fid).length;
+  const pos = mPos(), st = mCmd && mCmd.playing ? (serverNow() < mCmd.baseAt ? 'Starting...' : 'Playing') : 'Paused';
+  mInfo(mFile.name + '\nFile ready on ' + ready + ' of ' + ids.length + ' connected phones.\n' + st + ' at ' + Math.floor(pos / 60) + ':' + String(Math.floor(pos % 60)).padStart(2, '0') + ' of ' + Math.floor(mFile.buffer.duration / 60) + ':' + String(Math.floor(mFile.buffer.duration % 60)).padStart(2, '0'));
+}, 500);
 
 // ── admin recording: one mixed file + each singer on a separate track ──
 let rec = null;
